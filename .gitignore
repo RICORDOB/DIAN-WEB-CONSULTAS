@@ -1,0 +1,30 @@
+# Secretos y datos de clientes (nunca subir)
+clientes_dian.xlsx
+cliente_individual.xlsx
+credentials.json
+token.json
+
+# Datos generados en ejecución local
+data/
+jobs/
+*.db
+
+# Datos de entrada/salida del proyecto original
+descargas/
+clientes/
+plantilla_dian.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema / editor
+.DS_Store
+.~lock*
+Thumbs.db
+
+# Vars de entorno locales
+.env
+.env.*

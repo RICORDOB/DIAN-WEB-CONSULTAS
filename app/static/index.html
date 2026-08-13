@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DIAN Web — Acceso</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div class="card" id="loginView">
+    <h1>Consultas DIAN</h1>
+    <p class="subtitulo">Accede a tu cuenta para realizar consultas de información exógena.</p>
+
+    <div id="mensaje" class="mensaje oculto"></div>
+
+    <form id="loginForm" class="formulario">
+      <label for="usuario">Usuario</label>
+      <input type="text" id="usuario" name="usuario" required autocomplete="username" />
+
+      <label for="password">Contraseña</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password" />
+
+      <button type="submit" class="boton">Ingresar</button>
+    </form>
+
+    <p class="enlace">
+      ¿Aún no tienes cuenta?
+      <a href="#" id="btnRegistro">Solicitar alta</a>
+    </p>
+  </div>
+
+  <div class="card oculto" id="registroView">
+    <h1>Solicitar alta</h1>
+    <p class="subtitulo">Crea tu usuario. Un administrador deberá aprobar tu solicitud antes de que puedas ingresar.</p>
+
+    <div id="mensajeRegistro" class="mensaje oculto"></div>
+
+    <form id="registroForm" class="formulario">
+      <label for="nuevoUsuario">Usuario</label>
+      <input type="text" id="nuevoUsuario" required />
+
+      <label for="nuevaPassword">Contraseña</label>
+      <input type="password" id="nuevaPassword" required />
+
+      <button type="submit" class="boton">Solicitar alta</button>
+    </form>
+
+    <p class="enlace">
+      <a href="#" id="btnVolverLogin">← Volver al inicio</a>
+    </p>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

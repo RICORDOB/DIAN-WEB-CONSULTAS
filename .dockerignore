@@ -1,0 +1,27 @@
+# Artefactos de compilación / cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Datos generados en ejecución (no deben ir a la imagen)
+data/
+jobs/
+*.db
+
+# Secretos y datos de clientes
+clientes_dian.xlsx
+cliente_individual.xlsx
+credentials.json
+token.json
+
+# Artefactos del proyecto original
+descargas/
+clientes/
+dian_login.py
+*.command
+
+# Sistema
+.DS_Store
+.~lock*
+.git/
+.gitignore

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DIAN Web — Consulta</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <header class="barra">
+    <strong>Consultas DIAN</strong>
+    <div>
+      <span id="usuarioActual"></span>
+      <a href="/panel" class="v-inline">Consulta</a>
+      <a href="/dev" class="v-inline oculto" id="linkDev">Panel desarrollador</a>
+      <button class="boton-enlace" id="btnSalir">Salir</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h1>Consulta individual</h1>
+    <p class="subtitulo">Ingresa los datos del cliente y presiona CONSULTAR. El proceso se ejecuta internamente igual que al usar el archivo .command.</p>
+
+    <div id="mensaje" class="mensaje oculto"></div>
+
+    <form id="consultaForm" class="formulario">
+      <label for="tipoDocumento">Tipo de documento</label>
+      <select id="tipoDocumento">
+        <option>Cédula de Ciudadanía</option>
+        <option>Cédula de Extranjería</option>
+        <option>NIT</option>
+        <option>Tarjeta de Identidad</option>
+        <option>Pasaporte</option>
+        <option>NUIP</option>
+      </select>
+
+      <label for="numeroDocumento">Número de cédula / documento</label>
+      <input type="text" id="numeroDocumento" required inputmode="numeric" autocomplete="off" />
+
+      <label for="contrasena">Contraseña</label>
+      <input type="password" id="contrasena" required autocomplete="off" />
+
+      <button type="submit" class="boton" id="btnConsultar">CONSULTAR</button>
+    </form>
+
+    <div id="progresoBox" class="oculto">
+      <h3>Progreso</h3>
+      <div id="estadoJob" class="estado">En cola...</div>
+      <pre id="logProgreso" class="log"></pre>
+    </div>
+
+    <div id="descargaBox" class="oculto">
+      <a href="#" id="linkDescargar" class="boton">DESCARGAR RESULTADO</a>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

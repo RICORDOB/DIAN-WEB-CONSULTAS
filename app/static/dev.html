@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DIAN Web — Desarrollador</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <header class="barra">
+    <strong>Panel Desarrollador</strong>
+    <div>
+      <span id="usuarioActual"></span>
+      <a href="/panel" class="v-inline">Consulta</a>
+      <a href="/dev" class="v-inline">Panel desarrollador</a>
+      <button class="boton-enlace" id="btnSalir">Salir</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h1>Solicitudes de alta</h1>
+    <p class="subtitulo">Aprueba o rechaza los usuarios que solicitaron acceso por primera vez.</p>
+
+    <div id="mensaje" class="mensaje oculto"></div>
+
+    <table class="tabla" id="tablaUsuarios">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Rol</th>
+          <th>Estado</th>
+          <th>Creado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
