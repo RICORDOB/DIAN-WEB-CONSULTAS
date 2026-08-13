@@ -1,0 +1,86 @@
+=====================================================================
+RESUMEN DE PROYECTO — Automatización DIAN (login + exógena + renta + FE)
+=====================================================================
+Última actualización: 2026-07-18
+Estado: Fases 1, 2 y 3 COMPLETAS. Fase 4 COMPLETA (multi-cliente + Google Drive).
+Mejoras de robustez aplicadas: sesión aislada por cliente, log de ejecución
+y reintentos/validación de descargas.
+
+UBICACIÓN
+  Carpeta del proyecto: /Users/ricardorc/dian_login/
+  - dian_login.py            -> script principal (Python + Playwright + openpyxl + pandas)
+  - clientes_dian.xlsx       -> ENTRADA: credenciales de los clientes (CONTRASEÑAS, no subir a git)
+  - plantilla_dian.xlsx      -> (obsoleto; reemplazado por clientes_dian.xlsx)
+  - ejecutar.command         -> launcher macOS de doble clic (corre en ventana visible)
+  - descargas/               -> salida por cliente: "<NOMBRE CLIENTE>.xls" (ignorado por git)
+  - RESUMEN_PROYECTO.txt     -> este archivo
+
+QUÉ HACE EL SCRIPT (flujo por cliente, lee todas las filas de clientes_dian.xlsx)
+  1. LOGIN en muisca.dian.gov.co (portal transaccional DIAN) como "A nombre propio".
+  2. Descarga INFOMACIÓN EXÓGENA (AG 2025).
+  3. Determina si el cliente DEBE DECLARAR RENTA (Art. 592 E.T. / Dec. 1625-2016)
+     comparando los 5 topes contra la UVT 2025 = $49.799.
+  4. Descarga FACTURACIÓN ELECTRÓNICA (mismo flujo). Si la DIAN muestra el
+     recuadro rojo "No se encontró información para el año seleccionado",
+     se omite esa hoja y sigue el flujo.
+  5. Arma UN archivo .xls renombrado con el nombre del cliente, 3 hojas:
+       Hoja1 = Información Exógena (datos DIAN)
+       Hoja2 = Renta (¿declara? Sí/No + razones normativas)
+       Hoja3 = Facturación Electrónica (reporte o nota de "sin información")
+  6. (Fase 4) Sube ese archivo a la carpeta "DIAN" de Google Drive.
+
+SELECTORES CLAVE (ya validados en el portal actual de la DIAN)
+  LOGIN:
+    - "A nombre propio": get_by_role("button", name="A nombre propio")
+    - Tipo documento: mat-select[name='tipoDocumento'] -> option por texto (insensible a mayúsculas)
+    - Número: input[name='numDocumento']   (se habilita tras elegir tipo)
+    - Contraseña: input[name='password']
+    - Checkbox: mat-checkbox[name='aceptaTratamientoDatos']
+    - Ingresar: get_by_role("button", name="Ingresar")
+  EXÓGENA:
+    - Abrir: input[id='vistaDashboard:frmDashboard:btnExogena']
+    - Aceptar: input[id='vistaDashboard:frmDashboard:btnBuscar']
+    - Año: select[id='vistaDashboard:frmDashboard:anioSel']  (opciones 2020..2025)
+    - Consultar: input[id='vistaDashboard:frmDashboard:btnExogenaGenerar']  -> descarga XLS
+  FACTURACIÓN ELECTRÓNICA:
+    - Abrir: input[id='vistaDashboard:frmDashboard:btnFE']
+    - Aceptar: input[id='vistaDashboard:frmDashboard:btnBuscarFE']
+    - Año: select[id='vistaDashboard:frmDashboard:anioSelFE']
+    - Consultar: input[id='vistaDashboard:frmDashboard:btnFFGenerar']  -> descarga XLS (o error rojo)
+
+GOTCHAS (lo que costó encontrar)
+  - El reporte DIAN se descarga con extensión .xls pero su contenido es XLSX.
+    openpyxl rechaza la extensión .xls, por eso armar_libro_cliente COPIA el
+    archivo a un temporal .xlsx antes de abrirlo y guarda el final con .xls.
+  - Para declarar renta AG 2025 se usa UVT 2025 = $49.799 (la UVT 2026=$52.374
+    solo aplica a sanciones). Constantes en el script: UVT_2025, TOPES, RESOLUCION_UVT.
+  - Texto exacto del error sin datos FE:
+    "No se encontró información para el año seleccionado".
+  - El reporte de exógena suma consumos con tarjeta DÉBITO en "Consumo TC";
+    la norma solo cuenta tarjeta de CRÉDITO (anotado en las razones).
+  - El Excel de entrada tiene contraseñas en texto plano -> está en .gitignore.
+
+CÓMO EJECUTAR
+  python3 dian_login.py            # ventana visible (para demostrar)
+  python3 dian_login.py --headless # sin ventana (validación/CI)
+  doble clic en ejecutar.command    # igual que el anterior, modo ventana
+
+REQUISITOS
+  Python 3 + playwright + openpyxl + pandas + google-api-python-client + google-auth-oauthlib
+  playwright install chromium
+  Para Google Drive: crear credenciales OAuth en Google Cloud (Drive API),
+  descargar credentials.json a la carpeta y ejecutar (flujo de consentimiento
+  genera token.json). credentials.json y token.json NO se suben a git.
+
+PENDIENTE / NOTAS
+  - Entrada multi-cliente: SOPORTADO y CORREGIDO. El bucle de main() crea un
+    browser.new_context() NUEVO por cada cliente (sesión aislada); antes se
+    reusaba la sesión del cliente 1 y todos los siguientes se procesaban mal.
+  - Subida a Google Drive carpeta "DIAN": implementada; sube SOLO el archivo
+    consolidado <NOMBRE>.xls. Requiere credentials.json / token.json.
+  - LOG: se escribe consola + descargas/log_dian_<ts>.txt (timestamps) y al
+    final un RESUMEN OK/error/desconocido/excepcion.
+  - ROBUSTEZ: consultar_exogena y consultar_facturacion_electronica reintentan
+    (REINTENTOS=2) y validan que la descarga no esté vacía; timeouts en
+    TIMEOUT_LOGIN / TIMEOUT_DESCARGA.
+=====================================================================
