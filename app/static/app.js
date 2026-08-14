@@ -17,9 +17,24 @@ function peticion(url, opciones = {}) {
   return fetch(url, { ...opciones, headers, credentials: "same-origin" });
 }
 
+function extraerDetalle(data) {
+  if (data == null) return "Ocurrió un error.";
+  if (typeof data === "string") return data;
+  if (typeof data.detail === "string") return data.detail;
+  if (Array.isArray(data.detail)) {
+    // Errores de validación de FastAPI: cada item tiene "loc" y "msg"
+    return data.detail.map(function (e) {
+      const campo = Array.isArray(e.loc) ? e.loc.join(".") : String(e.loc);
+      return (campo ? campo + ": " : "") + (e.msg || "error inesperado");
+    }).join(" | ");
+  }
+  if (data.detail && data.detail.message) return data.detail.message;
+  return JSON.stringify(data);
+}
+
 function manejarError(resp, mensajeEl) {
   return resp.json().then((data) => {
-    mostrarMensaje(mensajeEl, data.detail || "Ocurrió un error.", "error");
+    mostrarMensaje(mensajeEl, extraerDetalle(data), "error");
   }).catch(() => {
     mostrarMensaje(mensajeEl, "Ocurrió un error.", "error");
   });
@@ -142,7 +157,11 @@ function iniciarPanel() {
 
     peticion("/api/consulta", {
       method: "POST",
-      body: JSON.stringify({ tipoDocumento, numeroDocumento, contrasena }),
+      body: JSON.stringify({
+        tipo_documento: tipoDocumento,
+        numero_documento: numeroDocumento,
+        contrasena: contrasena,
+      }),
     }).then((resp) => {
       if (!resp.ok) {
         btnConsultar.disabled = false;
