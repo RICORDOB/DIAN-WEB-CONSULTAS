@@ -2,8 +2,8 @@
 const CACHE = "dian-web-v1";
 const ASSETS = [
   "/",
-  "/assets/styles.css?v=20260829pwa",
-  "/assets/app.js?v=20260829pwa",
+  "/assets/styles.css?v=20260829r1",
+  "/assets/app.js?v=20260829r1",
 ];
 
 self.addEventListener("install", (e) => {

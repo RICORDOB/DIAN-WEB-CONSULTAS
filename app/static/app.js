@@ -40,6 +40,89 @@ function manejarError(resp, mensajeEl) {
   });
 }
 
+function registrarServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker
+    .register("/sw.js", { scope: "/", updateViaCache: "none" })
+    .then((reg) => reg.update())
+    .catch(() => {});
+}
+
+function _claveVapidUint8(clave) {
+  const b64 = clave.replace(/-/g, "+").replace(/_/g, "/");
+  const base = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const bin = window.atob(base);
+  const ui8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) ui8[i] = bin.charCodeAt(i);
+  return ui8;
+}
+
+function configurarPush(btn, estado) {
+  if (!btn) return;
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    if (estado) estado.textContent = "Notificaciones no disponibles en este navegador.";
+    btn.disabled = true;
+    return;
+  }
+  const pintar = () => {
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sus) => {
+        const activo = Boolean(sus);
+        if (estado) {
+          estado.textContent = activo ? "Notificaciones activadas." : "Notificaciones desactivadas.";
+        }
+        btn.textContent = activo ? "Desactivar notificaciones" : "Activar notificaciones";
+      })
+      .catch(() => {});
+  };
+  pintar();
+  btn.addEventListener("click", () => {
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sus) => {
+        if (sus) {
+          return peticion("/api/push/eliminar", {
+            method: "POST",
+            body: JSON.stringify({ endpoint: sus.endpoint }),
+          }).then(() => sus.unsubscribe());
+        }
+        return null;
+      })
+      .then((finalizado) => {
+        if (finalizado !== null) return undefined;
+        if (!("Notification" in window)) return undefined;
+        return peticion("/api/push/clave").then((r) => {
+          if (!r.ok) throw new Error("No autenticado.");
+          return r.json();
+        }).then((d) =>
+          Notification.requestPermission().then((perm) => {
+            if (perm !== "granted") return undefined;
+            return navigator.serviceWorker.ready.then((reg) =>
+              reg.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: _claveVapidUint8(d.vapid_public_key),
+              })
+            );
+          })
+        ).then((sus) => {
+          if (!sus) return undefined;
+          const clave = sus.toJSON();
+          return peticion("/api/push/registrar", {
+            method: "POST",
+            body: JSON.stringify({
+              endpoint: sus.endpoint,
+              p256dh: clave.keys.p256dh,
+              auth: clave.keys.auth,
+            }),
+          });
+        });
+      })
+      .then(pintar)
+      .catch(() => {});
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* Pantalla de login / registro (index.html)                           */
 /* ------------------------------------------------------------------ */
