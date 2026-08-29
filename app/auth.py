@@ -143,6 +143,17 @@ def iniciar_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_consultas_fecha ON consultas(fecha_creacion)"
         )
         conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_suscripciones (
+                usuario TEXT NOT NULL,
+                endpoint TEXT PRIMARY KEY,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                creado_en TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_consultas_estado ON consultas(estado)"
         )
         admin_user = os.environ.get("APP_ADMIN_USER")
@@ -297,6 +308,39 @@ def es_admin(usuario: str) -> bool:
             "SELECT rol FROM usuarios WHERE usuario = ?", (usuario,)
         ).fetchone()
     return bool(row and row["rol"] == "admin")
+
+
+# ---------------------------------------------------------------------------
+# Suscripciones push (PWA)
+# ---------------------------------------------------------------------------
+def guardar_suscripcion(usuario: str, endpoint: str, p256dh: str, auth_k: str) -> None:
+    """Guarda (o actualiza) la suscripción push de un usuario."""
+    with _conectar() as conn:
+        conn.execute(
+            "INSERT INTO push_suscripciones (usuario, endpoint, p256dh, auth, creado_en) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(endpoint) DO UPDATE SET "
+            "usuario = excluded.usuario, p256dh = excluded.p256dh, auth = excluded.auth, "
+            "creado_en = excluded.creado_en",
+            (usuario, endpoint, p256dh, auth_k, time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+
+def eliminar_suscripcion(endpoint: str) -> None:
+    """Elimina una suscripción push (baja voluntaria o endpoint inválido)."""
+    with _conectar() as conn:
+        conn.execute("DELETE FROM push_suscripciones WHERE endpoint = ?", (endpoint,))
+
+
+def listar_suscripciones(usuario: str) -> list[dict]:
+    """Suscripciones push activas de un usuario."""
+    with _conectar() as conn:
+        rows = conn.execute(
+            "SELECT usuario, endpoint, p256dh, auth FROM push_suscripciones "
+            "WHERE usuario = ?",
+            (usuario,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

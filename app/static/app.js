@@ -44,6 +44,7 @@ function manejarError(resp, mensajeEl) {
 /* Pantalla de login / registro (index.html)                           */
 /* ------------------------------------------------------------------ */
 function iniciarLogin() {
+  registrarServiceWorker();
   const loginView = document.getElementById("loginView");
   const registroView = document.getElementById("registroView");
 
@@ -129,6 +130,8 @@ function configurarSesion() {
 /* ------------------------------------------------------------------ */
 function iniciarPanel() {
   configurarSesion();
+  registrarServiceWorker();
+  configurarPush(document.getElementById("btnPush"), document.getElementById("pushEstado"));
   const form = document.getElementById("consultaForm");
   const mensaje = document.getElementById("mensaje");
   const progresoBox = document.getElementById("progresoBox");
@@ -228,6 +231,7 @@ const ETIQUETA_ESTADO = {
 
 function iniciarDev() {
   configurarSesion();
+  registrarServiceWorker();
   const mensaje = document.getElementById("mensaje");
   const btnTabU = document.getElementById("tabUsuarios");
   const btnTabD = document.getElementById("tabDashboard");

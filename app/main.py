@@ -19,6 +19,11 @@ Rutas:
   POST /api/admin/eliminar      -> eliminar cuenta y su historial (requiere admin)
   GET  /api/admin/estadisticas  -> KPIs y datos para el dashboard (requiere admin)
   GET  /api/admin/consultas     -> historial de consultas (requiere admin)
+  GET  /api/push/clave          -> llave pública VAPID (requiere sesión)
+  POST /api/push/registrar      -> alta de suscripción push (requiere sesión)
+  POST /api/push/eliminar       -> baja de suscripción push (requiere sesión)
+  GET  /manifest.webmanifest    -> manifiesto de la PWA
+  GET  /sw.js                   -> service worker (push + caché)
 """
 
 from __future__ import annotations
@@ -37,6 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth
+from . import push
 from .runner import DianRunner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -121,6 +127,16 @@ class DecidirIn(BaseModel):
     aprobar: bool
 
 
+class PushRegIn(BaseModel):
+    endpoint: str
+    p256dh: str
+    auth: str
+
+
+class PushDelIn(BaseModel):
+    endpoint: str
+
+
 # ---------------------------------------------------------------------------
 # Utilidades de sesión
 # ---------------------------------------------------------------------------
@@ -177,6 +193,26 @@ class _AssetsSinCache(StaticFiles):
 app.mount("/assets", _AssetsSinCache(directory=str(STATIC_DIR)), name="assets")
 
 
+@app.get("/manifest.webmanifest")
+async def webmanifest():
+    """Manifiesto de instalación de la PWA."""
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/sw.js")
+async def service_worker():
+    """Service worker (push + caché controlada); scope raíz para controlar la app."""
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # API: autenticación
 # ---------------------------------------------------------------------------
@@ -218,6 +254,39 @@ async def api_me(sesion: str | None = Cookie(default=None)):
     if not s:
         return {"autenticado": False}
     return {"autenticado": True, "usuario": s[0], "rol": s[1]}
+
+
+# ---------------------------------------------------------------------------
+# API: notificaciones push (PWA)
+# ---------------------------------------------------------------------------
+@app.get("/api/push/clave")
+async def api_push_clave(sesion: str | None = Cookie(default=None)):
+    """Llave pública VAPID para suscribirse a las notificaciones push."""
+    if not _sesion(sesion):
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    return {"vapid_public_key": push.clave_publica()}
+
+
+@app.post("/api/push/registrar")
+async def api_push_registrar(body: PushRegIn, sesion: str | None = Cookie(default=None)):
+    """Guarda la suscripción push del dispositivo del usuario."""
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    if not body.endpoint or not body.p256dh or not body.auth:
+        raise HTTPException(status_code=400, detail="Suscripción incompleta.")
+    auth.guardar_suscripcion(s[0], body.endpoint, body.p256dh, body.auth)
+    return {"ok": True, "registrada": True}
+
+
+@app.post("/api/push/eliminar")
+async def api_push_eliminar(body: PushDelIn, sesion: str | None = Cookie(default=None)):
+    """Da de baja una suscripción push (desactivación desde el dispositivo)."""
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    auth.eliminar_suscripcion(body.endpoint)
+    return {"ok": True, "registrada": False}
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +339,12 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
                 auth.actualizar_consulta(
                     job_id, auth.ESTADO_DONE, resultado=Path(final).name
                 )
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Consulta completada",
+                    "El resultado ya está disponible en tu panel.",
+                )
             except Exception as exc:  # noqa: BLE001
                 job["estado"] = "error"
                 job["error"] = f"{type(exc).__name__}: {exc}"
@@ -277,6 +352,12 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
                 job["progreso"].append(f"Error: {exc}")
                 auth.actualizar_consulta(
                     job_id, auth.ESTADO_ERROR, error=str(exc)
+                )
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Consulta fallida",
+                    f"No se pudo completar la consulta: {exc}",
                 )
 
     asyncio.create_task(_ejecutar())
