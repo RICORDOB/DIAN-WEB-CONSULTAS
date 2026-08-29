@@ -25,11 +25,26 @@ sin instalar nada en el equipo del usuario.
 app/
   main.py        # API FastAPI + vistas y gestión de jobs
   runner.py      # núcleo reutilizado (DianRunner): login, descargas, análisis, armado
-  auth.py        # usuarios, alta por aprobación, sesiones firmadas
+  auth.py        # usuarios, alta por aprobación, bloqueos, sesiones firmadas, historial
+  comun.py       # constantes compartidas (script y web): UVT, topes, selectores, calendario
   static/        # index.html, panel.html, dev.html, styles.css, app.js
+tests/           # pytest: auth, análisis de renta y registro de consultas
+requirements-dev.txt  # dependencias para desarrollo/pruebas (pytest)
+.env.example     # plantilla de variables de entorno
 Dockerfile
 requirements.txt
 ```
+
+## Panel del desarrollador
+
+Además de aprobar/rechazar solicitudes de alta, el panel `/dev` permite:
+
+- **Bloquear/desbloquear** el acceso de cualquier usuario; el bloqueo **revoca la sesión
+  en la siguiente petición** (se valida el estado en BD en cada llamada).
+- **Dashboard interactivo** (Chart.js vía CDN): KPIs de usuarios y consultas, consultas
+  por día (14 días) y por estado, y el historial de consultas por usuario.
+- Los datos sensibles de clientes (número de documento) **no se persisten**: el historial
+  guarda solo usuario, tipo de documento, fechas y estado/resultado.
 
 ## Configuración por variables de entorno
 
@@ -37,8 +52,11 @@ requirements.txt
 |---|---|---|
 | `APP_ADMIN_USER` | Usuario del primer administrador (quien aprueba altas) | `desarrollador` |
 | `APP_ADMIN_PASS` | Contraseña del administrador | `cambiar-me` |
-| `APP_SECRET_KEY` | Clave para firmar sesiones (generar aleatoria) | `$(openssl rand -hex 32)` |
+| `APP_SECRET_KEY` | Clave para firmar sesiones. **Obligatoria** (la app no arranca sin ella, salvo en dev) | `$(openssl rand -hex 32)` |
+| `APP_ENV` | `dev` desactiva el fail-fast de `APP_SECRET_KEY` para desarrollo local | `dev` |
 | `APP_SESSION_HOURS` | Duración de sesión en horas (default 12) | `12` |
+| `APP_DATA_DIR` | Carpeta de persistencia (DB SQLite) | `data` |
+| `APP_JOBS_DIR` | Carpeta de trabajos (descargas temporales) | `data/jobs` |
 
 El administrador se crea automáticamente al primer arranque si las variables
 `APP_ADMIN_USER`/`APP_ADMIN_PASS` están definidas y no existe aún.
@@ -56,6 +74,8 @@ playwright install chromium
 export APP_ADMIN_USER=admin APP_ADMIN_PASS=admin123 APP_SECRET_KEY=abc
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+Para desarrollo local sin `APP_SECRET_KEY`: `export APP_ENV=dev`.
 
 Abrir `http://localhost:8000`.
 
@@ -81,9 +101,21 @@ docker run --rm -p 8000:8000 \
 - Las credenciales de clientes existen **solo en memoria** durante la tarea y se
   descartan al terminar (los directorios temporales se limpian tras 1h).
 - Las contraseñas de usuarios se almacenan con hash (PBKDF2 + salt).
+- Las sesiones se firman con `APP_SECRET_KEY`; la app **no arranca** sin ella (fail-fast)
+  salvo en desarrollo con `APP_ENV=dev`.
+- Bloquear a un usuario lo revoca al instante: cada petición valida su estado en BD.
+- Headers de seguridad (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) en todas las respuestas.
+- Rate limiting por IP en `/api/login`, `/api/registro` y `/api/consulta`.
 - HTTPS lo provee la plataforma.
 - **Nunca** se deben incluir `clientes_dian.xlsx`, `cliente_individual.xlsx` ni
   `credentials.json` en el repositorio (están en `.gitignore`).
+
+## Pruebas
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
 
 ## Notas técnicas (gotchas conocidos)
 

@@ -18,6 +18,7 @@ import hmac
 import os
 import sqlite3
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -26,6 +27,13 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 PENDIENTE = "pendiente"
 APROBADO = "aprobado"
 RECHAZADO = "rechazado"
+BLOQUEADO = "bloqueado"
+
+# Estados de una consulta (reflejan el estado del job)
+ESTADO_QUEUED = "queued"
+ESTADO_RUNNING = "running"
+ESTADO_DONE = "done"
+ESTADO_ERROR = "error"
 
 # Rutas de almacenamiento (configurables por variables de entorno en despliegue)
 _data_dir = Path(os.environ.get("APP_DATA_DIR", "data"))
@@ -58,7 +66,13 @@ def _verificar_password(password: str, salt: str, hash_esperado: str) -> bool:
 # ---------------------------------------------------------------------------
 # Sesión (cookie firmada)
 # ---------------------------------------------------------------------------
-_sessions = URLSafeTimedSerializer(os.environ.get("APP_SECRET_KEY", "clave-dev-no-usar"))
+_secret = os.environ.get("APP_SECRET_KEY", "")
+if not _secret and os.environ.get("APP_ENV") != "dev":
+    raise RuntimeError(
+        "APP_SECRET_KEY no está definida. Genera una con `openssl rand -hex 32` "
+        "y defínela en el entorno (o ejecuta con APP_ENV=dev para desarrollo local)."
+    )
+_sessions = URLSafeTimedSerializer(_secret or "clave-dev-no-usar")
 SESSION_MAX_AGE = int(os.environ.get("APP_SESSION_HOURS", 12)) * 3600
 
 
@@ -111,6 +125,26 @@ def iniciar_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS consultas (
+                id TEXT PRIMARY KEY,
+                usuario TEXT NOT NULL,
+                tipo_documento TEXT,
+                fecha_creacion TEXT NOT NULL,
+                fecha_fin TEXT,
+                estado TEXT NOT NULL,
+                resultado TEXT,
+                error TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consultas_fecha ON consultas(fecha_creacion)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consultas_estado ON consultas(estado)"
+        )
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
@@ -137,7 +171,7 @@ def registrar(usuario: str, password: str) -> dict:
         raise AuthError("El usuario debe tener al menos 3 caracteres.")
     if len(password) < 6:
         raise AuthError("La contraseña debe tener al menos 6 caracteres.")
-    if usuario == "admin" or "admin" in os.environ.get("APP_ADMIN_USER", "").lower():
+    if usuario == os.environ.get("APP_ADMIN_USER", "").strip().lower():
         raise AuthError("Ese nombre de usuario no está disponible.")
 
     with _conectar() as conn:
@@ -170,7 +204,39 @@ def verificar_login(usuario: str, password: str) -> dict:
         raise AuthError("Tu cuenta está pendiente de aprobación por el administrador.")
     if row["estado"] == RECHAZADO:
         raise AuthError("Tu solicitud de alta fue rechazada.")
+    if row["estado"] == BLOQUEADO:
+        raise AuthError("Tu cuenta está bloqueada. Contacta al administrador.")
+    if row["estado"] != APROBADO:
+        raise AuthError("Tu cuenta no está habilitada para iniciar sesión.")
     return {"usuario": row["usuario"], "rol": row["rol"], "estado": row["estado"]}
+
+
+def estado_usuario(usuario: str) -> str | None:
+    """Devuelve el estado actual de un usuario, o None si no existe."""
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT estado FROM usuarios WHERE usuario = ?", (usuario,)
+        ).fetchone()
+    return row["estado"] if row else None
+
+
+def bloquear_usuario(usuario: str, bloquear: bool, admin: str) -> dict:
+    """Bloquea o desbloquea el acceso de un usuario. Registra la acción."""
+    nuevo_estado = BLOQUEADO if bloquear else APROBADO
+    with _conectar() as conn:
+        cur = conn.execute(
+            "UPDATE usuarios SET estado = ? WHERE usuario = ?",
+            (nuevo_estado, usuario),
+        )
+        if cur.rowcount == 0:
+            raise AuthError(f"No se encontró el usuario '{usuario}'.")
+        conn.execute(
+            "INSERT INTO registros (accion, quien, usuario, cuando) "
+            "VALUES (?, ?, ?, ?)",
+            ("bloquear" if bloquear else "desbloquear", admin, usuario,
+             time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"usuario": usuario, "estado": nuevo_estado}
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +276,120 @@ def es_admin(usuario: str) -> bool:
             "SELECT rol FROM usuarios WHERE usuario = ?", (usuario,)
         ).fetchone()
     return bool(row and row["rol"] == "admin")
+
+
+# ---------------------------------------------------------------------------
+# Consultas (historial para el dashboard del desarrollador)
+# ---------------------------------------------------------------------------
+def registrar_consulta(job_id: str, usuario: str, tipo_documento: str) -> None:
+    """Persiste el arranque de una consulta (estado 'queued')."""
+    with _conectar() as conn:
+        conn.execute(
+            "INSERT INTO consultas (id, usuario, tipo_documento, fecha_creacion, estado) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (job_id, usuario, tipo_documento,
+             time.strftime("%Y-%m-%d %H:%M:%S"), ESTADO_QUEUED),
+        )
+
+
+def actualizar_consulta(job_id: str, estado: str, resultado: str | None = None,
+                        error: str | None = None) -> None:
+    """Actualiza el estado/resultado/error de una consulta al terminar."""
+    with _conectar() as conn:
+        conn.execute(
+            "UPDATE consultas SET estado = ?, resultado = ?, error = ?, "
+            "fecha_fin = COALESCE(fecha_fin, ?) WHERE id = ?",
+            (estado, resultado, error,
+             time.strftime("%Y-%m-%d %H:%M:%S"), job_id),
+        )
+
+
+def marcar_consultas_huerfanas() -> int:
+    """Marca como 'error' las consultas que quedaron queued/running (reinicie)."""
+    with _conectar() as conn:
+        cur = conn.execute(
+            "UPDATE consultas SET estado = ?, error = ?, fecha_fin = ? "
+            "WHERE estado IN (?, ?)",
+            (ESTADO_ERROR, "proceso interrumpido (reinicio del servidor)",
+             time.strftime("%Y-%m-%d %H:%M:%S"),
+             ESTADO_QUEUED, ESTADO_RUNNING),
+        )
+    return cur.rowcount
+
+
+def listar_consultas(usuario: str | None = None, estado: str | None = None,
+                     limite: int = 100) -> list[dict]:
+    """Lista consultas recientes, filtrando opcionalmente por usuario y estado."""
+    sql = "SELECT * FROM consultas WHERE 1=1"
+    params: list = []
+    if usuario:
+        sql += " AND usuario = ?"
+        params.append(usuario)
+    if estado:
+        sql += " AND estado = ?"
+        params.append(estado)
+    sql += " ORDER BY fecha_creacion DESC LIMIT ?"
+    params.append(limite)
+    with _conectar() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def estadisticas_completas() -> dict:
+    """Métricas de usuarios y consultas para el dashboard del desarrollador."""
+    with _conectar() as conn:
+        usuarios = dict(conn.execute(
+            "SELECT estado, COUNT(*) FROM usuarios GROUP BY estado"
+        ).fetchall())
+        total_c = int(conn.execute(
+            "SELECT COUNT(*) FROM consultas"
+        ).fetchone()[0])
+        por_estado = dict(conn.execute(
+            "SELECT estado, COUNT(*) FROM consultas GROUP BY estado"
+        ).fetchall())
+        rows_ultimas = conn.execute(
+            "SELECT fecha_creacion, estado FROM consultas "
+            "ORDER BY fecha_creacion DESC LIMIT 1000"
+        ).fetchall()
+        por_usuario = dict(conn.execute(
+            "SELECT usuario, COUNT(*) FROM consultas GROUP BY usuario ORDER BY 2 DESC"
+        ).fetchall())
+
+    # Últimos 14 días con ceros para los días sin consultas
+    desde = date.today() - timedelta(days=13)
+    agrupadas: dict[str, list[int]] = {}
+    for x in rows_ultimas:
+        dia = (x["fecha_creacion"] or "")[:10]
+        if dia < desde.isoformat():
+            continue
+        agrupadas.setdefault(dia, [0, 0, 0])
+        agrupadas[dia][0] += 1
+        if x["estado"] == ESTADO_DONE:
+            agrupadas[dia][1] += 1
+        elif x["estado"] == ESTADO_ERROR:
+            agrupadas[dia][2] += 1
+
+    por_dia = []
+    for i in range(14):
+        dia = (desde + timedelta(days=i)).isoformat()
+        a = agrupadas.get(dia, [0, 0, 0])
+        por_dia.append({"fecha": dia, "total": a[0], "done": a[1], "error": a[2]})
+
+    return {
+        "usuarios": {
+            "total": sum(usuarios.values()),
+            "aprobados": usuarios.get(APROBADO, 0),
+            "pendientes": usuarios.get(PENDIENTE, 0),
+            "rechazados": usuarios.get(RECHAZADO, 0),
+            "bloqueados": usuarios.get(BLOQUEADO, 0),
+        },
+        "consultas": {
+            "total": total_c,
+            "done": por_estado.get(ESTADO_DONE, 0),
+            "error": por_estado.get(ESTADO_ERROR, 0),
+            "running": por_estado.get(ESTADO_RUNNING, 0),
+            "queued": por_estado.get(ESTADO_QUEUED, 0),
+        },
+        "por_dia": por_dia,
+        "por_usuario": [{"usuario": u, "total": t} for u, t in por_usuario.items()],
+    }

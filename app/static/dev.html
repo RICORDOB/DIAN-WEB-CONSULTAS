@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DIAN Web — Desarrollador</title>
   <link rel="stylesheet" href="/assets/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
   <header class="barra">
@@ -17,11 +18,17 @@
     </div>
   </header>
 
-  <div class="card">
-    <h1>Solicitudes de alta</h1>
-    <p class="subtitulo">Aprueba o rechaza los usuarios que solicitaron acceso por primera vez.</p>
+  <div id="mensaje" class="mensaje oculto"></div>
 
-    <div id="mensaje" class="mensaje oculto"></div>
+  <nav class="tabs">
+    <button class="tab activo" id="tabUsuarios">Usuarios</button>
+    <button class="tab" id="tabDashboard">Dashboard</button>
+  </nav>
+
+  <!-- Vista: gestión de usuarios -->
+  <section class="card panel-ancho vista" id="vistaUsuarios">
+    <h1>Solicitudes de alta</h1>
+    <p class="subtitulo">Aprueba o rechaza los usuarios que solicitaron acceso, y bloquea/desbloquea cuentas existentes. Bloquear derriba la sesión del usuario de inmediato.</p>
 
     <table class="tabla" id="tablaUsuarios">
       <thead>
@@ -35,7 +42,54 @@
       </thead>
       <tbody></tbody>
     </table>
-  </div>
+  </section>
+
+  <!-- Vista: dashboard de consultas -->
+  <section class="card panel-ancho vista oculto" id="vistaDashboard">
+    <h1>Dashboard de consultas</h1>
+    <p class="subtitulo">Resumen de actividad: consultas por día, estado y usuarios (sin datos sensibles de clientes).</p>
+
+    <div class="kpis" id="kpisUsuarios"></div>
+    <div class="kpis" id="kpisConsultas"></div>
+
+    <div class="graficas">
+      <div class="grafica-caja">
+        <h3>Consultas por día (14 días)</h3>
+        <canvas id="chartDias" height="220"></canvas>
+      </div>
+      <div class="grafica-caja">
+        <h3>Consultas por estado</h3>
+        <canvas id="chartEstados" height="220"></canvas>
+      </div>
+    </div>
+
+    <div class="filtros">
+      <select id="filtroEstado">
+        <option value="">Estado: todos</option>
+        <option value="done">Exitosas</option>
+        <option value="error">Con error</option>
+        <option value="running">En curso</option>
+        <option value="queued">En cola</option>
+      </select>
+      <select id="filtroUsuario">
+        <option value="">Usuario: todos</option>
+      </select>
+      <button class="boton boton-mini" id="btnLimpiarFiltros">Limpiar filtros</button>
+    </div>
+
+    <table class="tabla" id="tablaConsultas">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Tipo doc.</th>
+          <th>Inicio</th>
+          <th>Estado</th>
+          <th>Resultado / Error</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
 
   <script src="/assets/app.js"></script>
 </body>

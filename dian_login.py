@@ -37,19 +37,27 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from playwright.async_api import async_playwright
 
+from app.comun import (
+    ANIO_EXOGENO,
+    CALENDARIO_RENTA_2026,
+    NORMA_TOPES,
+    REINTENTOS,
+    RESOLUCION_UVT,
+    TEXTO_SIN_DATOS_FE,
+    TIMEOUT_DESCARGA,
+    TIMEOUT_LOGIN,
+    TOPES,
+    URL_LOGIN,
+    UVT_2025,
+)
+
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN
 # ---------------------------------------------------------------------------
-URL_LOGIN = "https://muisca.dian.gov.co/WebArquitectura/DefLogin.faces"
 EXCEL_PATH = Path(__file__).parent / "clientes_dian.xlsx"
 EXCEL_INDIVIDUAL_PATH = Path(__file__).parent / "cliente_individual.xlsx"
 DOWNLOAD_DIR = Path(__file__).parent / "descargas"
 CLIENTES_DIR = Path(__file__).parent / "clientes"
-
-# Tiempos y reintentos
-TIMEOUT_LOGIN = 15_000
-TIMEOUT_DESCARGA = 30_000
-REINTENTOS = 2
 
 # Log de ejecución (consola + archivo en descargas/)
 LOG_PATH = DOWNLOAD_DIR / f"log_dian_{datetime.now():%Y%m%d_%H%M%S}.txt"
@@ -64,44 +72,9 @@ def loguear(mensaje: str) -> None:
     with open(LOG_PATH, "a", encoding="utf-8") as fh:
         fh.write(linea + "\n")
 
-# Fase 2: año gravable a consultar en "Consultar información Exógena"
-ANIO_EXOGENO = "2025"
-
-# Fase 3: determinación de obligación de declarar renta (AG 2025, se presenta en 2026)
-# Se usa la UVT 2025 (no la de 2026, que solo aplica a sanciones).
-UVT_2025 = 49_799
-RESOLUCION_UVT = "Res. DIAN 000193 de 2024"
-NORMA_TOPES = "Art. 592 E.T. y Dec. 1625-2016 (art. 1.6.1.13.2.7)"
-
-# Calendario DIAN 2026 — Vencimiento declaración renta personas naturales AG 2025
-# Res. DIAN 000238 de 2025. Fechas según los dos últimos dígitos del NIT.
-CALENDARIO_RENTA_2026 = {
-    (1, 2): date(2026, 8, 12),   (3, 4): date(2026, 8, 13),
-    (5, 6): date(2026, 8, 14),   (7, 8): date(2026, 8, 18),
-    (9, 10): date(2026, 8, 19),  (11, 12): date(2026, 8, 20),
-    (13, 14): date(2026, 8, 21), (15, 16): date(2026, 8, 24),
-    (17, 18): date(2026, 8, 25), (19, 20): date(2026, 8, 26),
-    (21, 22): date(2026, 8, 27), (23, 24): date(2026, 8, 28),
-    (25, 26): date(2026, 8, 31), (27, 28): date(2026, 9, 1),
-    (29, 30): date(2026, 9, 2),  (31, 32): date(2026, 9, 3),
-    (33, 34): date(2026, 9, 4),  (35, 36): date(2026, 9, 7),
-    (37, 38): date(2026, 9, 8),  (39, 40): date(2026, 9, 9),
-    (41, 42): date(2026, 9, 10), (43, 44): date(2026, 9, 11),
-    (45, 46): date(2026, 9, 14), (47, 48): date(2026, 9, 15),
-    (49, 50): date(2026, 9, 16), (51, 52): date(2026, 9, 17),
-    (53, 54): date(2026, 9, 18), (55, 56): date(2026, 9, 21),
-    (57, 58): date(2026, 9, 22), (59, 60): date(2026, 9, 23),
-    (61, 62): date(2026, 9, 24), (63, 64): date(2026, 9, 25),
-    (65, 66): date(2026, 9, 28), (67, 68): date(2026, 10, 1),
-    (69, 70): date(2026, 10, 2), (71, 72): date(2026, 10, 5),
-    (73, 74): date(2026, 10, 6), (75, 76): date(2026, 10, 7),
-    (77, 78): date(2026, 10, 8), (79, 80): date(2026, 10, 9),
-    (81, 82): date(2026, 10, 13), (83, 84): date(2026, 10, 14),
-    (85, 86): date(2026, 10, 15), (87, 88): date(2026, 10, 16),
-    (89, 90): date(2026, 10, 19), (91, 92): date(2026, 10, 20),
-    (93, 94): date(2026, 10, 21), (95, 96): date(2026, 10, 22),
-    (97, 98): date(2026, 10, 23), (99, 0): date(2026, 10, 26),
-}
+# Fase 4: Google Drive
+SUBIR_A_DRIVE = True
+DRIVE_CARPETA = "DIAN"
 
 
 def _fecha_vencimiento_renta(numero_documento: str) -> date:
@@ -114,18 +87,7 @@ def _fecha_vencimiento_renta(numero_documento: str) -> date:
     msg = f"No hay fecha en el calendario para los dígitos '{ultimos_dos:02d}'"
     raise ValueError(msg)
 
-# Cada tope: (categoría en el reporte, UVT, descripción legal, operador)
-TOPES = [
-    ("Ingresos",   1_400, "Ingresos brutos",                  ">="),
-    ("Patrimonio", 4_500, "Patrimonio bruto",                 ">"),
-    ("Consumo TC", 1_400, "Consumos con tarjeta de crédito",  ">="),
-    ("Movimiento", 1_400, "Consignaciones bancarias",         ">="),
-    ("Compras",    1_400, "Compras y consumos totales",       ">="),
-]
 
-# Fase 4: Google Drive
-SUBIR_A_DRIVE = True
-DRIVE_CARPETA = "DIAN"
 DRIVE_CREDENTIALS = Path(__file__).parent / "credentials.json"
 DRIVE_TOKEN = Path(__file__).parent / "token.json"
 
@@ -425,7 +387,7 @@ async def consultar_facturacion_electronica(page, anio: str, nro_doc: str) -> Op
             except Exception as exc:  # noqa: BLE001
                 # Sin datos: la DIAN muestra el recuadro rojo y no hay descarga.
                 if await page.get_by_text(
-                    "No se encontró información para el año seleccionado", exact=False
+                    TEXTO_SIN_DATOS_FE, exact=False
                 ).count():
                     loguear("  [FE] sin información para el año seleccionado -> "
                             "se omite hoja 3.")
@@ -489,7 +451,7 @@ def armar_libro_cliente(exogena_path: Path, analisis: dict,
         _copiar_valores(load_workbook(str(tmp_fe)).active, ws3)
         tmp_fe.unlink()
     else:
-        ws3["A1"] = "No se encontró información para el año seleccionado."
+        ws3["A1"] = TEXTO_SIN_DATOS_FE + "."
 
     CLIENTES_DIR.mkdir(exist_ok=True)
     final = CLIENTES_DIR / f"{nombre}.xls"

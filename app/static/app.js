@@ -211,16 +211,48 @@ function iniciarPanel() {
 /* ------------------------------------------------------------------ */
 /* Panel desarrollador (dev.html)                                      */
 /* ------------------------------------------------------------------ */
+let _chartDias = null;
+let _chartEstados = null;
+let _filtrosConsultas = { estado: "", usuario: "" };
+
+const ETIQUETA_ESTADO = {
+  pendiente: "Pendiente",
+  aprobado: "Aprobado",
+  rechazado: "Rechazado",
+  bloqueado: "Bloqueado",
+  queued: "En cola",
+  running: "En curso",
+  done: "Exitoso",
+  error: "Error",
+};
+
 function iniciarDev() {
   configurarSesion();
   const mensaje = document.getElementById("mensaje");
+  const btnTabU = document.getElementById("tabUsuarios");
+  const btnTabD = document.getElementById("tabDashboard");
+  const vistaU = document.getElementById("vistaUsuarios");
+  const vistaD = document.getElementById("vistaDashboard");
+
+  function activarTab(vista) {
+    btnTabU.classList.toggle("activo", vista === "usuarios");
+    btnTabD.classList.toggle("activo", vista === "dashboard");
+    vistaU.classList.toggle("oculto", vista !== "usuarios");
+    vistaD.classList.toggle("oculto", vista !== "dashboard");
+    if (vista === "dashboard") cargarDashboard();
+  }
+  btnTabU.addEventListener("click", () => activarTab("usuarios"));
+  btnTabD.addEventListener("click", () => activarTab("dashboard"));
+  activarTab("usuarios");
+
+  /* -------- Tab Usuarios -------- */
   const tbody = document.querySelector("#tablaUsuarios tbody");
 
   function cargar() {
     peticion("/api/admin/pendientes").then((resp) => {
       if (!resp.ok) {
         if (resp.status === 403) { window.location.href = "/panel"; }
-        return;
+        return manejarError(resp, mensaje);
       }
       return resp.json().then((data) => {
         tbody.innerHTML = "";
@@ -229,26 +261,34 @@ function iniciarDev() {
           fila.innerHTML =
             "<td>" + escapar(u.usuario) + "</td>" +
             "<td>" + escapar(u.rol) + "</td>" +
-            "<td>" + escapar(u.estado) + "</td>" +
+            '<td><span class="etiqueta etiqueta-' + u.estado + '">' +
+              (ETIQUETA_ESTADO[u.estado] || escapar(u.estado)) + "</span></td>" +
             "<td>" + escapar(u.creado_en) + "</td>" +
             "<td></td>";
 
           const acciones = fila.lastElementChild;
           if (u.estado === "pendiente") {
-            const btnOk = document.createElement("button");
-            btnOk.textContent = "Aprobar";
-            btnOk.className = "boton boton-mini ok";
-            btnOk.addEventListener("click", () => decidir(u.usuario, true));
-            const btnNo = document.createElement("button");
-            btnNo.textContent = "Rechazar";
-            btnNo.className = "boton boton-mini peligro";
-            btnNo.addEventListener("click", () => decidir(u.usuario, false));
-            acciones.append(btnOk, " ", btnNo);
+            acciones.appendChild(btnAccion("Aprobar", "ok", () => decidir(u.usuario, true)));
+            acciones.appendChild(btnAccion("Rechazar", "peligro", () => decidir(u.usuario, false)));
+          } else if (u.estado === "aprobado") {
+            acciones.appendChild(btnAccion("Bloquear", "peligro", () => bloquear(u.usuario, true)));
+          } else if (u.estado === "bloqueado") {
+            acciones.appendChild(btnAccion("Desbloquear", "ok", () => bloquear(u.usuario, false)));
+          } else if (u.estado === "rechazado") {
+            acciones.appendChild(btnAccion("Rehabilitar", "ok", () => decidir(u.usuario, true)));
           }
           tbody.appendChild(fila);
         });
       });
     });
+  }
+
+  function btnAccion(texto, clase, onClic) {
+    const b = document.createElement("button");
+    b.textContent = texto;
+    b.className = "boton boton-mini " + clase;
+    b.addEventListener("click", onClic);
+    return b;
   }
 
   function decidir(usuario, aprobar) {
@@ -259,13 +299,178 @@ function iniciarDev() {
       if (resp.ok) {
         mostrarMensaje(mensaje, aprobar ? "Alta aprobada." : "Solicitud rechazada.", "ok");
         cargar();
-      } else {
-        manejarError(resp, mensaje);
-      }
+      } else { manejarError(resp, mensaje); }
+    });
+  }
+
+  function bloquear(usuario, bloquear) {
+    peticion("/api/admin/bloquear", {
+      method: "POST",
+      body: JSON.stringify({ usuario, bloquear }),
+    }).then((resp) => {
+      if (resp.ok) {
+        mostrarMensaje(mensaje,
+          bloquear ? "Acceso bloqueado. La sesión del usuario se derribó." : "Acceso restablecido.",
+          "ok");
+        cargar();
+      } else { manejarError(resp, mensaje); }
     });
   }
 
   cargar();
+
+  /* -------- Tab Dashboard -------- */
+  function cargarDashboard() {
+    cagarKPIs();
+    cargarConsultas();
+  }
+
+  function cagarKPIs() {
+    peticion("/api/admin/estadisticas").then((resp) => {
+      if (!resp.ok) { return manejarError(resp, mensaje); }
+      return resp.json().then((data) => {
+        renderizarKPIsUsuarios(data.usuarios);
+        renderizarKPIsConsultas(data.consultas);
+        dibujarGraficas(data);
+        llenarFiltroUsuarios(data.por_usuario);
+      });
+    });
+  }
+
+  function renderizarKPIsUsuarios(u) {
+    document.getElementById("kpisUsuarios").innerHTML =
+      kpi("Usuarios", u.total, "azul") +
+      kpi("Aprobados", u.aprobados, "ok") +
+      kpi("Pendientes", u.pendientes, "info") +
+      kpi("Bloqueados", u.bloqueados, "peligro") +
+      kpi("Rechazados", u.rechazados, "gris");
+  }
+
+  function renderizarKPIsConsultas(c) {
+    const tasa = c.total ? Math.round((c.done / c.total) * 100) + "%" : "—";
+    document.getElementById("kpisConsultas").innerHTML =
+      kpi("Consultas totales", c.total, "azul") +
+      kpi("Exitosas", c.done, "ok", "done") +
+      kpi("Errores", c.error, "peligro", "error") +
+      kpi("En curso", c.running + c.queued, "info", "running") +
+      kpi("Tasa de éxito", tasa, "gris");
+  }
+
+  function kpi(titulo, valor, tipo, filtro) {
+    const clase = filtro ? " kpi-filtrable kpi-" + filtro : "";
+    return '<div class="kpi-card' + clase + '" data-filtro="' + (filtro || "") + '">' +
+      '<span class="kpi-titulo">' + titulo + '</span>' +
+      '<span class="kpi-valor kpi-' + tipo + '">' + escapar(String(valor)) + "</span></div>";
+  }
+
+  function dibujarGraficas(data) {
+    const dias = data.por_dia || [];
+    if (window.Chart) {
+      const labels = dias.map((d) => d.fecha.slice(5));
+      if (_chartDias) _chartDias.destroy();
+      _chartDias = new Chart(document.getElementById("chartDias"), {
+        type: "bar",
+        data: {
+          labels: labels,
+          datasets: [
+            { label: "Exitosas", data: dias.map((d) => d.done), backgroundColor: "#2e7d32" },
+            { label: "Errores", data: dias.map((d) => d.error), backgroundColor: "#c62828" },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+        },
+      });
+
+      if (_chartEstados) _chartEstados.destroy();
+      const c = data.consultas;
+      _chartEstados = new Chart(document.getElementById("chartEstados"), {
+        type: "doughnut",
+        data: {
+          labels: ["Exitosas", "Errores", "En curso"],
+          datasets: [{
+            data: [c.done, c.error, c.running + c.queued],
+            backgroundColor: ["#2e7d32", "#c62828", "#0d47a1"],
+          }],
+        },
+        options: { responsive: true, maintainAspectRatio: false },
+      });
+    }
+  }
+
+  function llenarFiltroUsuarios(porUsuario) {
+    const sel = document.getElementById("filtroUsuario");
+    const actual = sel.value;
+    sel.innerHTML = '<option value="">Usuario: todos</option>' +
+      (porUsuario || []).map(function (p) {
+        return '<option value="' + escapar(p.usuario) + '">' + escapar(p.usuario) + " (" + p.total + ")</option>";
+      }).join("");
+    sel.value = actual;
+  }
+
+  function cargarConsultas() {
+    const params = new URLSearchParams();
+    if (_filtrosConsultas.estado) params.set("estado", _filtrosConsultas.estado);
+    if (_filtrosConsultas.usuario) params.set("usuario", _filtrosConsultas.usuario);
+    peticion("/api/admin/consultas?" + params.toString()).then((resp) => {
+      if (!resp.ok) { return manejarError(resp, mensaje); }
+      return resp.json().then((data) => {
+        renderizarConsultas(data.consultas || []);
+      });
+    });
+  }
+
+  function renderizarConsultas(lista) {
+    const tb = document.querySelector("#tablaConsultas tbody");
+    if (!lista.length) {
+      tb.innerHTML = '<tr><td colspan="5" class="sin-datos">Sin consultas registradas.</td></tr>';
+      return;
+    }
+    tb.innerHTML = lista.map((c) =>
+      "<tr>" +
+      "<td>" + escapar(c.usuario) + "</td>" +
+      "<td>" + escapar(c.tipo_documento || "—") + "</td>" +
+      "<td>" + escapar(c.fecha_creacion || "—") + "</td>" +
+      '<td><span class="etiqueta etiqueta-' + c.estado + '">' +
+        (ETIQUETA_ESTADO[c.estado] || escapar(c.estado)) + "</span></td>" +
+      "<td>" + escapar(c.estado === "done" ? (c.resultado || "listo") : (c.error || "—")) + "</td>" +
+      "</tr>"
+    ).join("");
+  }
+
+  /* -------- Interacción del dashboard -------- */
+  document.getElementById("kpisConsultas").addEventListener("click", (e) => {
+    const card = e.target.closest(".kpi-filtrable");
+    if (!card) return;
+    const filtro = card.dataset.filtro;
+    _filtrosConsultas.estado = (_filtrosConsultas.estado === filtro) ? "" : filtro;
+    document.getElementById("filtroEstado").value = _filtrosConsultas.estado;
+    cargarConsultas();
+  });
+
+  document.getElementById("filtroEstado").addEventListener("change", (e) => {
+    _filtrosConsultas.estado = e.target.value;
+    cargarConsultas();
+  });
+
+  document.getElementById("filtroUsuario").addEventListener("change", (e) => {
+    _filtrosConsultas.usuario = e.target.value;
+    cargarConsultas();
+  });
+
+  document.getElementById("btnLimpiarFiltros").addEventListener("click", () => {
+    _filtrosConsultas = { estado: "", usuario: "" };
+    document.getElementById("filtroEstado").value = "";
+    document.getElementById("filtroUsuario").value = "";
+    cargarConsultas();
+    cagarKPIs();
+  });
+
+  setInterval(() => {
+    if (!vistaD.classList.contains("oculto")) cargarDashboard();
+  }, 10000);
 }
 
 /* ------------------------------------------------------------------ */

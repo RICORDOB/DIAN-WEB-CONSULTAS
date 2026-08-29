@@ -22,7 +22,7 @@ import asyncio
 import re
 import shutil
 import sys
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -31,70 +31,39 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from playwright.async_api import async_playwright
 
+from .comun import (
+    ANIO_EXOGENO,
+    CALENDARIO_RENTA_2026,
+    NORMA_TOPES,
+    REINTENTOS,
+    RESOLUCION_UVT,
+    TEXTO_SIN_DATOS_FE,
+    TIMEOUT_DESCARGA,
+    TOPES,
+    URL_LOGIN,
+    UVT_2025,
+)
+
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN
 # ---------------------------------------------------------------------------
-URL_LOGIN = "https://muisca.dian.gov.co/WebArquitectura/DefLogin.faces"
-
-# Tiempos y reintentos
-TIMEOUT_LOGIN = 15_000
-TIMEOUT_DESCARGA = 30_000
-REINTENTOS = 2
-
-# Año gravable a consultar
-ANIO_EXOGENO = "2025"
 
 # Fase 4 desactivada: los resultados se quedan en el entorno de ejecución
 # (la subida a Google Drive puede reactivarse en una versión futura).
 SUBIR_A_DRIVE = False
 
-# UVT y topes legales (Art. 592 E.T.)
-UVT_2025 = 49_799
-RESOLUCION_UVT = "Res. DIAN 000193 de 2024"
-NORMA_TOPES = "Art. 592 E.T. y Dec. 1625-2016 (art. 1.6.1.13.2.7)"
-
-# Calendario DIAN 2026 — Vencimiento declaración renta personas naturales AG 2025
-CALENDARIO_RENTA_2026 = {
-    (1, 2): date(2026, 8, 12),   (3, 4): date(2026, 8, 13),
-    (5, 6): date(2026, 8, 14),   (7, 8): date(2026, 8, 18),
-    (9, 10): date(2026, 8, 19),  (11, 12): date(2026, 8, 20),
-    (13, 14): date(2026, 8, 21), (15, 16): date(2026, 8, 24),
-    (17, 18): date(2026, 8, 25), (19, 20): date(2026, 8, 26),
-    (21, 22): date(2026, 8, 27), (23, 24): date(2026, 8, 28),
-    (25, 26): date(2026, 8, 31), (27, 28): date(2026, 9, 1),
-    (29, 30): date(2026, 9, 2),  (31, 32): date(2026, 9, 3),
-    (33, 34): date(2026, 9, 4),  (35, 36): date(2026, 9, 7),
-    (37, 38): date(2026, 9, 8),  (39, 40): date(2026, 9, 9),
-    (41, 42): date(2026, 9, 10), (43, 44): date(2026, 9, 11),
-    (45, 46): date(2026, 9, 14), (47, 48): date(2026, 9, 15),
-    (49, 50): date(2026, 9, 16), (51, 52): date(2026, 9, 17),
-    (53, 54): date(2026, 9, 18), (55, 56): date(2026, 9, 21),
-    (57, 58): date(2026, 9, 22), (59, 60): date(2026, 9, 23),
-    (61, 62): date(2026, 9, 24), (63, 64): date(2026, 9, 25),
-    (65, 66): date(2026, 9, 28), (67, 68): date(2026, 10, 1),
-    (69, 70): date(2026, 10, 2), (71, 72): date(2026, 10, 5),
-    (73, 74): date(2026, 10, 6), (75, 76): date(2026, 10, 7),
-    (77, 78): date(2026, 10, 8), (79, 80): date(2026, 10, 9),
-    (81, 82): date(2026, 10, 13), (83, 84): date(2026, 10, 14),
-    (85, 86): date(2026, 10, 15), (87, 88): date(2026, 10, 16),
-    (89, 90): date(2026, 10, 19), (91, 92): date(2026, 10, 20),
-    (93, 94): date(2026, 10, 21), (95, 96): date(2026, 10, 22),
-    (97, 98): date(2026, 10, 23), (99, 0): date(2026, 10, 26),
-}
-
-# Cada tope: (categoría en el reporte, UVT, descripción legal, operador)
-TOPES = [
-    ("Ingresos",   1_400, "Ingresos brutos",                  ">="),
-    ("Patrimonio", 4_500, "Patrimonio bruto",                 ">"),
-    ("Consumo TC", 1_400, "Consumos con tarjeta de crédito",  ">="),
-    ("Movimiento", 1_400, "Consignaciones bancarias",         ">="),
-    ("Compras",    1_400, "Compras y consumos totales",       ">="),
-]
-
-# Texto exacto del error "sin datos" de facturación electrónica en la DIAN
-TEXTO_SIN_DATOS_FE = "No se encontró información para el año seleccionado"
+# Texto de la notificación de progreso en login (único de este módulo)
+MENSAJE_LOGIN = "Ingresando al portal DIAN"
 
 ProgresoCb = Callable[[str, bool], None]
+
+
+def num_documento_mascarado(numero_documento: str) -> str:
+    """Máscara simple para no imprimir el documento completo en los logs."""
+    n = numero_documento.strip()
+    if len(n) <= 4:
+        return "*" * len(n)
+    return n[:2] + "*" * (len(n) - 4) + n[-2:]
 
 
 class DianRunner:
@@ -315,8 +284,7 @@ class DianRunner:
                 destino_ws[cell.coordinate].value = cell.value
 
     def armar_libro_cliente(self, exogena_path: Path, analisis: dict,
-                            facturacion_path: Optional[Path],
-                            fe_base: str = "") -> Path:
+                            facturacion_path: Optional[Path]) -> Path:
         """Copia el XLSX de exógena y le agrega las hojas Renta y Facturación Electrónica."""
         nombre = self._nombre_seguro(analisis["nombre_cliente"])
         tmp_exo = self.download_dir / f".tmp_exo_{nombre}.xlsx"
@@ -342,7 +310,7 @@ class DianRunner:
             self._copiar_valores(load_workbook(str(tmp_fe)).active, ws3)
             tmp_fe.unlink()
         else:
-            ws3["A1"] = TEXTO_SIN_DATOS_FE + ("." if fe_base else ".")
+            ws3["A1"] = TEXTO_SIN_DATOS_FE + "."
 
         final = self.clientes_dir / f"{nombre}.xls"
         wb.save(str(final))
@@ -351,7 +319,13 @@ class DianRunner:
 
     def analizar_exogena(self, ruta: Path) -> dict:
         """Determina si la persona está obligada a declarar renta según los topes."""
-        df = pd.read_excel(ruta, header=None, engine="openpyxl")
+        try:
+            df = pd.read_excel(ruta, header=None, engine="openpyxl")
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"El reporte de exógena descargado es ilegible o está corrupto "
+                f"({type(exc).__name__}: {exc})."
+            ) from exc
 
         nombre = None
         for r in range(df.shape[0]):
@@ -513,14 +487,6 @@ class DianRunner:
             finally:
                 await context.close()
                 await browser.close()
-
-
-def num_documento_mascarado(numero_documento: str) -> str:
-    """Máscara simple para no imprimir el documento completo en los logs."""
-    n = numero_documento.strip()
-    if len(n) <= 4:
-        return "*" * len(n)
-    return n[:2] + "*" * (len(n) - 4) + n[-2:]
 
 
 # Mantener la posicion de SUBIR_A_DRIVE accesible (utilizado por lógica futura de Drive)

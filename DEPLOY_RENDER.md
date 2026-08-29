@@ -33,10 +33,32 @@ Agrega estas tres (obligatorias):
 |---|---|
 | `APP_ADMIN_USER` | usuario del administrador (quien aprueba altas), p. ej. `ricardo` |
 | `APP_ADMIN_PASS` | contraseña del administrador (fuerte) |
-| `APP_SECRET_KEY` | `cee79fa0386627f9dc610566940f949dab35b1775a61c59c9de8ded6703e73da` |
+| `APP_SECRET_KEY` | générala con `openssl rand -hex 32` (aleatoria por despliegue) |
 
-> `APP_SECRET_KEY` se puede cambiar y regenerar con `openssl rand -hex 32`.
-> Cámbiala si este archivo llegara a ser público.
+> `APP_SECRET_KEY` firma las sesiones. **Nunca** debe ser un valor fijo commiteado.
+> La app **no arranca** si no está definida (fail-fast), salvo en desarrollo con `APP_ENV=dev`.
+
+### Nota de seguridad: rotación del secreto anterior
+
+Una versión anterior de este archivo y de `deploy_render.sh` incluía un valor fijo del
+`APP_SECRET_KEY` que quedó en el historial de git. Si ese despliegue se llegó a publicar
+con tales valores, considera:
+
+1. Generar y fijar un **nuevo** `APP_SECRET_KEY` en Render (Settings → Environment).
+2. En Render: PHP / redeploy (Manual Deploy) para invalidar las sesiones anteriores.
+3. Si el repositorio es público o comparte historial con terceros, limpiarlo con
+   `git filter-repo` (requiere reescribir la historia y fuerza de push).
+
+### Panel Desarrollador (usuarios + dashboard)
+
+Además de aprobar/rechazar altas, el panel `/dev` permite:
+
+- **Bloquear/desbloquear** el acceso de cualquier usuario. Bloquear **derriba la sesión
+  en la siguiente petición** (revocación en vivo), sin esperar la caducidad de la cookie.
+- Consultar un **dashboard interactivo**: KPIs de usuarios y consultas, gráficas de
+  consultas por día (14 días) y por estado, y el historial de consultas por usuario.
+- El número de documento de los clientes **no se persiste** (ni en BD ni en el dashboard).
+  El historial guarda solo usuario, tipo de documento, fechas y estado/resultado.
 
 ## 4. Desplegar
 

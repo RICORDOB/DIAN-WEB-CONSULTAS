@@ -19,6 +19,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # Sistema / editor
 .DS_Store
@@ -28,3 +29,4 @@ Thumbs.db
 # Vars de entorno locales
 .env
 .env.*
+!.env.example
