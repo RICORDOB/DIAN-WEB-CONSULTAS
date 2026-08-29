@@ -110,6 +110,48 @@ def test_consulta_sin_sesion_rechazada(client, db):
     assert r.status_code == 401
 
 
+def test_admin_elimina_usuario_y_su_historial(client, db, admin):
+    cookie = _login(client, admin, "admin123").cookies.get("sesion")
+
+    # Alta y aprobación
+    client.post("/api/registro", json={"usuario": "ana", "password": "clave123"})
+    assert client.post("/api/admin/decidir", json={"usuario": "ana", "aprobar": True},
+                       cookies={"sesion": cookie}).status_code == 200
+
+    # Ana entra y genera una consulta persistida
+    ana_cookie = _login(client, "ana", "clave123").cookies.get("sesion")
+    assert client.get("/api/me", cookies={"sesion": ana_cookie}).json()["autenticado"] is True
+    auth.registrar_consulta("job-ana", "ana", "Cédula de Ciudadanía")
+    assert auth.listar_consultas(usuario="ana")  # hay historial
+
+    # Eliminación
+    r = client.post("/api/admin/eliminar", json={"usuario": "ana"},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["usuario"] == "ana"
+
+    # Cuenta y consultas purgadas; la sesión de Ana queda revocada en vivo
+    assert auth.estado_usuario("ana") is None
+    assert auth.listar_consultas(usuario="ana") == []
+    assert client.get("/api/me", cookies={"sesion": ana_cookie}).json()["autenticado"] is False
+    assert _login(client, "ana", "clave123").status_code == 401
+
+    # Ya no figura en la lista ni en las estadísticas
+    pendientes = client.get("/api/admin/pendientes", cookies={"sesion": cookie}).json()
+    assert not any(u["usuario"] == "ana" for u in pendientes["pendientes"])
+    stats = client.get("/api/admin/estadisticas", cookies={"sesion": cookie}).json()
+    assert stats["usuarios"]["total"] == 1  # solo el admin
+
+
+def test_admin_no_puede_eliminarse_ni_eliminar_un_admin(client, db, admin):
+    cookie = _login(client, admin, "admin123").cookies.get("sesion")
+    r = client.post("/api/admin/eliminar", json={"usuario": admin},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 400
+    r = client.post("/api/admin/eliminar", json={"usuario": "inexistente"},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 400
+
+
 def test_headers_de_seguridad(client, db):
     r = client.get("/")
     assert r.headers.get("x-frame-options") == "DENY"

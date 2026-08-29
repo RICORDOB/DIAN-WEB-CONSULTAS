@@ -270,6 +270,27 @@ def decidir_alta(usuario: str, aprobar: bool, admin: str) -> dict:
     return {"usuario": usuario, "estado": nuevo_estado}
 
 
+def eliminar_usuario(usuario: str, admin: str) -> dict:
+    """Elimina una cuenta de usuario y su historial de consultas. Solo admin.
+
+    Al borrar el registro, `estado_usuario()` devuelve None y la sesión del
+    usuario queda revocada en vivo en la siguiente petición.
+    """
+    with _conectar() as conn:
+        cur = conn.execute(
+            "DELETE FROM usuarios WHERE usuario = ?", (usuario,)
+        )
+        if cur.rowcount == 0:
+            raise AuthError(f"No se encontró el usuario '{usuario}'.")
+        conn.execute("DELETE FROM consultas WHERE usuario = ?", (usuario,))
+        conn.execute(
+            "INSERT INTO registros (accion, quien, usuario, cuando) "
+            "VALUES (?, ?, ?, ?)",
+            ("eliminar", admin, usuario, time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"usuario": usuario, "eliminado": True}
+
+
 def es_admin(usuario: str) -> bool:
     with _conectar() as conn:
         row = conn.execute(

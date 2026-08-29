@@ -15,6 +15,10 @@ Rutas:
   GET  /api/job/{id}/descargar  -> descargar el libro .xls resultante
   GET  /api/admin/pendientes    -> solicitudes de alta (requiere admin)
   POST /api/admin/decidir       -> aprobar/rechazar alta (requiere admin)
+  POST /api/admin/bloquear      -> bloquear/desbloquear acceso (requiere admin)
+  POST /api/admin/eliminar      -> eliminar cuenta y su historial (requiere admin)
+  GET  /api/admin/estadisticas  -> KPIs y datos para el dashboard (requiere admin)
+  GET  /api/admin/consultas     -> historial de consultas (requiere admin)
 """
 
 from __future__ import annotations
@@ -159,7 +163,18 @@ async def pag_dev(sesion: str | None = Cookie(default=None)):
     return HTMLResponse(html)
 
 
-app.mount("/assets", StaticFiles(directory=str(STATIC_DIR)), name="assets")
+class _AssetsSinCache(StaticFiles):
+    """Estáticos con revalidación forzada: evita que navegador/edge sigan usando
+    JS/CSS viejos tras un despliegue (los tabs y listados dependen de cargar la
+    versión actual)."""
+
+    async def get_response(self, path, scope):
+        respuesta = await super().get_response(path, scope)
+        respuesta.headers["Cache-Control"] = "no-cache"
+        return respuesta
+
+
+app.mount("/assets", _AssetsSinCache(directory=str(STATIC_DIR)), name="assets")
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +364,25 @@ async def api_bloquear(body: BloquearIn, sesion: str | None = Cookie(default=Non
         raise HTTPException(status_code=400, detail="No puedes bloquearte a ti mismo.")
     try:
         res = auth.bloquear_usuario(body.usuario, body.bloquear, admin)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return res
+
+
+class EliminarIn(BaseModel):
+    usuario: str
+
+
+@app.post("/api/admin/eliminar")
+async def api_eliminar(body: EliminarIn, sesion: str | None = Cookie(default=None)):
+    """Elimina una cuenta de usuario y su historial de consultas (revoca su sesión)."""
+    admin = _requiere_admin(sesion)[0]
+    if body.usuario == admin:
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta.")
+    if auth.es_admin(body.usuario):
+        raise HTTPException(status_code=400, detail="No puedes eliminar una cuenta de administrador.")
+    try:
+        res = auth.eliminar_usuario(body.usuario, admin)
     except auth.AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return res

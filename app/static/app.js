@@ -267,15 +267,18 @@ function iniciarDev() {
             "<td></td>";
 
           const acciones = fila.lastElementChild;
-          if (u.estado === "pendiente") {
-            acciones.appendChild(btnAccion("Aprobar", "ok", () => decidir(u.usuario, true)));
-            acciones.appendChild(btnAccion("Rechazar", "peligro", () => decidir(u.usuario, false)));
-          } else if (u.estado === "aprobado") {
-            acciones.appendChild(btnAccion("Bloquear", "peligro", () => bloquear(u.usuario, true)));
-          } else if (u.estado === "bloqueado") {
-            acciones.appendChild(btnAccion("Desbloquear", "ok", () => bloquear(u.usuario, false)));
-          } else if (u.estado === "rechazado") {
-            acciones.appendChild(btnAccion("Rehabilitar", "ok", () => decidir(u.usuario, true)));
+          if (u.rol !== "admin") {
+            if (u.estado === "pendiente") {
+              acciones.appendChild(btnAccion("Aprobar", "ok", () => decidir(u.usuario, true)));
+              acciones.appendChild(btnAccion("Rechazar", "peligro", () => decidir(u.usuario, false)));
+            } else if (u.estado === "aprobado") {
+              acciones.appendChild(btnAccion("Bloquear", "peligro", () => bloquear(u.usuario, true)));
+            } else if (u.estado === "bloqueado") {
+              acciones.appendChild(btnAccion("Desbloquear", "ok", () => bloquear(u.usuario, false)));
+            } else if (u.estado === "rechazado") {
+              acciones.appendChild(btnAccion("Rehabilitar", "ok", () => decidir(u.usuario, true)));
+            }
+            acciones.appendChild(btnAccion("Eliminar", "peligro", () => eliminar(u.usuario)));
           }
           tbody.appendChild(fila);
         });
@@ -312,6 +315,22 @@ function iniciarDev() {
         mostrarMensaje(mensaje,
           bloquear ? "Acceso bloqueado. La sesión del usuario se derribó." : "Acceso restablecido.",
           "ok");
+        cargar();
+      } else { manejarError(resp, mensaje); }
+    });
+  }
+
+  function eliminar(usuario) {
+    if (!window.confirm(
+      "¿Eliminar al usuario '" + usuario + "'?\n\n" +
+      "Se borrará su cuenta y su historial de consultas. Esta acción no se puede deshacer."
+    )) return;
+    peticion("/api/admin/eliminar", {
+      method: "POST",
+      body: JSON.stringify({ usuario }),
+    }).then((resp) => {
+      if (resp.ok) {
+        mostrarMensaje(mensaje, "Usuario eliminado.", "ok");
         cargar();
       } else { manejarError(resp, mensaje); }
     });
