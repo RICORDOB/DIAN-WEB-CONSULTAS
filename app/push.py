@@ -15,15 +15,25 @@ from . import auth
 _data_dir = Path(os.environ.get("APP_DATA_DIR", "data"))
 _VAPID_FILE = _data_dir / "vapid.json"
 _VAPID_SUBJECT = "mailto:consultas@dian-web.local"
+_CLAVE_CONFIG_VAPID = "vapid_private_pem"
 
 
 def _vapid_private_pem() -> str:
-    """Llave privada VAPID (PEM PKCS8). Se genera y persiste en APP_DATA_DIR la
-    primera vez, para que las suscripciones sobrevivan a los reinicios."""
+    """Llave privada VAPID (PEM PKCS8). Se persiste en la tabla `config` la
+    primera vez para que las suscripciones sobrevivan a reinicios y redespliegues.
+
+    En el despliegue sobre Turso la clave queda en la nube y es estable entre
+    deploys; en local sin Turso persiste en la BD sqlite local.
+    """
+    persistida = auth.config_get(_CLAVE_CONFIG_VAPID)
+    if persistida:
+        return persistida
+    # Compatibilidad con instalaciones antiguas que usaban el archivo vapid.json
     try:
         if _VAPID_FILE.exists():
             datos = json.loads(_VAPID_FILE.read_text(encoding="utf-8"))
             if datos.get("private_pem"):
+                auth.config_set(_CLAVE_CONFIG_VAPID, datos["private_pem"])
                 return datos["private_pem"]
     except Exception:
         pass
@@ -37,10 +47,7 @@ def _vapid_private_pem() -> str:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
-    _VAPID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _VAPID_FILE.write_text(
-        json.dumps({"private_pem": priv_pem}), encoding="utf-8"
-    )
+    auth.config_set(_CLAVE_CONFIG_VAPID, priv_pem)
     return priv_pem
 
 

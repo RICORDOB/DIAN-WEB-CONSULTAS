@@ -12,6 +12,8 @@ os.environ["APP_DATA_DIR"] = _TMP
 os.environ["APP_JOBS_DIR"] = str(Path(_TMP) / "jobs")
 os.environ["APP_SECRET_KEY"] = "clave-de-prueba-segura"
 os.environ["APP_ENV"] = "dev"
+os.environ.pop("TURSO_DB_URL", None)
+os.environ.pop("TURSO_AUTH_TOKEN", None)
 
 from app import auth  # noqa: E402
 from app.runner import DianRunner  # noqa: E402

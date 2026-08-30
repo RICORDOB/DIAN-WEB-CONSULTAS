@@ -16,12 +16,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import sqlite3
 import time
 from datetime import date, timedelta
 from pathlib import Path
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+from . import db as _db
 
 # Estados de un usuario
 PENDIENTE = "pendiente"
@@ -92,10 +93,9 @@ def leer_token(token: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Base de datos
 # ---------------------------------------------------------------------------
-def _conectar() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _conectar():
+    """Conexión al backend activo: Turso si hay credenciales, si no sqlite3 local."""
+    return _db.conectar()
 
 
 def iniciar_db() -> None:
@@ -156,6 +156,14 @@ def iniciar_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_consultas_estado ON consultas(estado)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS config (
+                clave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
+            )
+            """
+        )
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
@@ -170,6 +178,26 @@ def iniciar_db() -> None:
                     "VALUES (?, ?, ?, 'admin', 'aprobado', ?)",
                     (admin_user, h, s, time.strftime("%Y-%m-%d %H:%M:%S")),
                 )
+
+
+# ---------------------------------------------------------------------------
+# Claves de configuración persistente (p. ej. llave VAPID para push)
+# ---------------------------------------------------------------------------
+def config_get(clave: str) -> str | None:
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT valor FROM config WHERE clave = ?", (clave,)
+        ).fetchone()
+    return row["valor"] if row else None
+
+
+def config_set(clave: str, valor: str) -> None:
+    with _conectar() as conn:
+        conn.execute(
+            "INSERT INTO config (clave, valor) VALUES (?, ?) "
+            "ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor",
+            (clave, valor),
+        )
 
 
 # ---------------------------------------------------------------------------
