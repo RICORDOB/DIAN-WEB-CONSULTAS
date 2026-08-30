@@ -220,12 +220,67 @@ function iniciarPanel() {
   const progresoBox = document.getElementById("progresoBox");
   const logProgreso = document.getElementById("logProgreso");
   const estadoJob = document.getElementById("estadoJob");
+  const barraFill = document.getElementById("barraFill");
+  const barraPct = document.getElementById("barraPct");
   const descargaBox = document.getElementById("descargaBox");
   const linkDescargar = document.getElementById("linkDescargar");
+  const btnImprimir = document.getElementById("btnImprimir");
   const btnConsultar = document.getElementById("btnConsultar");
 
   let jobId = null;
   let pollTimer = null;
+  // Estado de la barra de progreso (0-100% con animación suave).
+  let pctActual = 0;
+  let pctObjetivo = 0;
+  let animTimer = null;
+
+  // Etapas conocidas del proceso: cada hito eleva el mínimo de la barra.
+  const HITOS = [
+    ["login en muisca", 15],
+    ["sesión iniciada correctamente", 35],
+    ["exógena descargada", 50],
+    ["analizando obligación de declarar renta", 58],
+    ["declara renta", 62],
+    ["facturación electrónica", 75],
+    ["archivo cliente generado", 90],
+  ];
+
+  function pctPorHitos(lineas) {
+    const texto = (lineas.join("\n") || "").toLowerCase();
+    let obj = 8;
+    HITOS.forEach((par) => {
+      if (texto.includes(par[0])) obj = Math.max(obj, par[1]);
+    });
+    return Math.min(99, obj);
+  }
+
+  function pintarPct() {
+    barraFill.style.width = pctActual + "%";
+    barraPct.textContent = Math.round(pctActual) + "%";
+  }
+
+  function iniciarAnimacion() {
+    if (animTimer) return;
+    animTimer = setInterval(() => {
+      const diff = pctObjetivo - pctActual;
+      if (diff >= 0.5 && pctActual < 99) {
+        pctActual += Math.max(0.5, diff * 0.12);
+      } else {
+        pctActual = pctObjetivo;
+      }
+      pintarPct();
+    }, 130);
+  }
+
+  function pararAnimacion() {
+    if (animTimer) { clearInterval(animTimer); animTimer = null; }
+  }
+
+  function formatearMonto(n) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    if (n === 0) return "$0";
+    return "$" + Math.round(n).toLocaleString("es-CO");
+  }
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -240,6 +295,10 @@ function iniciarPanel() {
     logProgreso.textContent = "";
     estadoJob.textContent = "Iniciando...";
     btnConsultar.disabled = true;
+    pctActual = 0;
+    pctObjetivo = 8;
+    barraFill.className = "barra-fill";
+    pintarPct();
 
     peticion("/api/consulta", {
       method: "POST",
@@ -251,6 +310,7 @@ function iniciarPanel() {
     }).then((resp) => {
       if (!resp.ok) {
         btnConsultar.disabled = false;
+        pararAnimacion();
         return manejarError(resp, mensaje);
       }
       return resp.json().then((data) => {
@@ -270,17 +330,27 @@ function iniciarPanel() {
 
         if (data.estado === "done") {
           clearInterval(pollTimer);
-          estadoJob.textContent = "Completado. Descarga disponible.";
+          pararAnimacion();
+          pctActual = 100;
+          pintarPct();
+          barraFill.classList.add("completo");
+          estadoJob.textContent = "Consulta completada.";
           finalizarJob(data);
         } else if (data.estado === "error") {
           clearInterval(pollTimer);
+          pararAnimacion();
+          barraFill.classList.add("error");
           estadoJob.textContent = "Error en el proceso.";
           mostrarMensaje(mensaje, data.error || "Falló la consulta.", "error");
           btnConsultar.disabled = false;
         } else if (data.estado === "running") {
-          estadoJob.textContent = "Procesando...";
+          estadoJob.textContent = "Procesando consulta...";
+          pctObjetivo = pctPorHitos(data.progreso);
+          iniciarAnimacion();
         } else {
           estadoJob.textContent = "En cola...";
+          pctObjetivo = Math.max(pctObjetivo, 5);
+          iniciarAnimacion();
         }
       });
     });
@@ -291,6 +361,56 @@ function iniciarPanel() {
     linkDescargar.href = "/api/job/" + jobId + "/descargar";
     btnConsultar.disabled = false;
     mostrarMensaje(mensaje, "Consulta completada.", "ok");
+
+    const r = data.resultado || {};
+    const declara = r.declara_renta === "Sí";
+    document.getElementById("resultadoTitulo").textContent =
+      declara ? "OBLIGADO A DECLARAR RENTA" : "NO OBLIGADO A DECLARAR RENTA";
+    document.getElementById("resultadoIcono").textContent = declara ? "!" : "\u2713";
+    document.getElementById("resultadoVeredicto").className =
+      "resultado-veredicto " + (declara ? "verdict-si" : "verdict-no");
+    document.getElementById("resultadoCliente").textContent =
+      r.nombre_cliente ? "Cliente: " + r.nombre_cliente : "";
+
+    const vence = document.getElementById("resultadoVence");
+    if (declara && r.fecha_vencimiento) {
+      vence.textContent = "Vence: " + r.fecha_vencimiento;
+      vence.classList.remove("oculto");
+    } else {
+      vence.classList.add("oculto");
+    }
+
+    document.getElementById("resultadoCabecera").textContent = r.cabecera || "";
+
+    const nota = document.getElementById("resultadoNota");
+    if (r.nota) {
+      nota.textContent = r.nota;
+      nota.classList.remove("oculto");
+    } else {
+      nota.classList.add("oculto");
+    }
+
+    const tb = document.querySelector("#tablaTopes tbody");
+    tb.innerHTML = "";
+    (r.topes || []).forEach((t) => {
+      const fila = document.createElement("tr");
+      fila.innerHTML =
+        "<td>" + escapar(t.desc) + "</td>" +
+        "<td>" + escapar(formatearMonto(t.reportado)) + "</td>" +
+        "<td>" + escapar(formatearMonto(t.umbral)) + "</td>" +
+        '<td><span class="etiqueta etiqueta-' + (t.excede ? "excede" : "ok") + '">' +
+          (t.excede ? "EXCEDE" : "ok") + "</span></td>";
+      tb.appendChild(fila);
+    });
+
+    document.getElementById("printFecha").textContent =
+      "Bogotá, " + new Date().toLocaleDateString("es-CO", {
+        day: "numeric", month: "long", year: "numeric",
+      });
+
+    if (btnImprimir) {
+      btnImprimir.addEventListener("click", () => window.print());
+    }
   }
 }
 

@@ -52,6 +52,19 @@ def test_no_excede(runner, tmp_path):
     assert "NO está obligada" in res["razones"]
 
 
+def test_topes_estructurados(runner, tmp_path):
+    """El análisis expone el cotejo de topes en forma estructurada para el panel."""
+    ruta = _reporte(tmp_path / "topes.xlsx", ingresos=INGRESOS_UMBRAL)
+    res = runner.analizar_exogena(ruta)
+    assert isinstance(res["topes"], list) and len(res["topes"]) == 5
+    assert set(("desc", "cat", "reportado", "umbral", "excede")) <= set(res["topes"][0])
+    ingreso = next(t for t in res["topes"] if t["cat"] == "Ingresos")
+    assert ingreso["excede"] is True
+    assert ingreso["reportado"] == INGRESOS_UMBRAL
+    assert ingreso["umbral"] == INGRESOS_UMBRAL
+    assert res["cabecera"]
+
+
 def test_reportes_vacio_devuelve_desconocido(runner, tmp_path):
     ruta = tmp_path / "vacio.xlsx"
     Workbook().save(ruta)

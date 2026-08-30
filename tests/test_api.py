@@ -1,6 +1,9 @@
 """Smoke de la API web: flujo de alta→aprobación→bloqueo, revocación en vivo,
 dashboard del admin y seguridad básica, usando TestClient."""
 
+import time
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -157,3 +160,49 @@ def test_headers_de_seguridad(client, db):
     assert r.headers.get("x-frame-options") == "DENY"
     assert r.headers.get("x-content-type-options") == "nosniff"
     assert r.headers.get("referrer-policy") == "same-origin"
+
+
+def test_consulta_expone_resultado_al_panel(client, db, admin, monkeypatch, tmp_path):
+    """Un job completado expone el análisis estructurado vía /api/job/{id}."""
+    from app import main as mainmod
+
+    class RunnerStub:
+        def __init__(self, job_dir, progreso=None):
+            self.ultimo_analisis = {
+                "nombre_cliente": "ANA",
+                "declara_renta": "No",
+                "cabecera": "La persona NO está obligada a declarar renta.",
+                "nota": "",
+                "topes": [{
+                    "desc": "Ingresos brutos", "cat": "Ingresos",
+                    "reportado": 100.0, "umbral": 200.0, "excede": False,
+                }],
+            }
+
+        async def consulta_individual(self, *args, **kwargs):
+            ruta = tmp_path / "ANA.xls"
+            ruta.write_bytes(b"x")
+            return ruta
+
+    monkeypatch.setattr(mainmod, "DianRunner", RunnerStub)
+    cookie = _login(client, admin, "admin123").cookies.get("sesion")
+    r = client.post("/api/consulta", json={
+        "tipo_documento": "Cédula de Ciudadanía",
+        "numero_documento": "12345678",
+        "contrasena": "secreta",
+    }, cookies={"sesion": cookie})
+    assert r.status_code == 200
+    job_id = r.json()["job_id"]
+
+    data = {}
+    for _ in range(60):
+        data = client.get("/api/job/" + job_id, cookies={"sesion": cookie}).json()
+        if data["estado"] in ("done", "error"):
+            break
+        time.sleep(0.05)
+
+    assert data["estado"] == "done"
+    assert data["final"].endswith("ANA.xls")
+    assert data["resultado"]["declara_renta"] == "No"
+    assert data["resultado"]["nombre_cliente"] == "ANA"
+    assert data["resultado"]["topes"][0]["excede"] is False

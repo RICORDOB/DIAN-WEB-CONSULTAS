@@ -77,6 +77,9 @@ class DianRunner:
         self.clientes_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.download_dir / f"log_dian_{datetime.now():%Y%m%d_%H%M%S}.txt"
         self.progreso = progreso
+        # Análisis de renta de la última consulta, para que el orquestador
+        # (main.py) pueda exponerlo al frontend vía /api/job/{id}.
+        self.ultimo_analisis: dict | None = None
 
     # -------------------------------------------------------------------
     # Logging / progreso
@@ -364,6 +367,9 @@ class DianRunner:
                     cat = label
                 valores[cat] = num
 
+        # Topes evaluados en forma estructurada (para mostrar en el panel)
+        # y en forma de texto legible (para el libro Excel / razones).
+        topes = []
         lineas = []
         declara = False
         for cat, uvt, desc, op in TOPES:
@@ -372,6 +378,13 @@ class DianRunner:
             excede = (valor >= umbral) if op == ">=" else (valor > umbral)
             if excede:
                 declara = True
+            topes.append({
+                "desc": desc,
+                "cat": cat,
+                "reportado": valor,
+                "umbral": umbral,
+                "excede": excede,
+            })
             lineas.append(
                 f"- {desc} (Tope {cat}): reportado ${valor:,.0f}  |  "
                 f"umbral {uvt:,} UVT = ${umbral:,.0f}  ->  "
@@ -401,6 +414,9 @@ class DianRunner:
             "nombre_cliente": nombre or "DESCONOCIDO",
             "declara_renta": "Sí" if declara else "No",
             "razones": razones,
+            "cabecera": cabecera,
+            "nota": nota.strip(),
+            "topes": topes,
         }
 
     # -------------------------------------------------------------------
@@ -417,6 +433,7 @@ class DianRunner:
         self.loguear("  [Fase3] Analizando obligación de declarar renta...")
         analisis = self.analizar_exogena(exogena)
         analisis["fecha_vencimiento"] = creds.get("fecha_vencimiento", "")
+        self.ultimo_analisis = analisis
         self.loguear(f"  [Fase3] {analisis['nombre_cliente']} -> declara renta: "
                      f"{analisis['declara_renta']} | vence: {analisis['fecha_vencimiento']}")
 

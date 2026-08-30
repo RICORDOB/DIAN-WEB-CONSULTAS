@@ -115,6 +115,35 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0d47a1; }
   word-break: break-word;
 }
 
+/* Barra de progreso 0-100% */
+.barra-track {
+  width: 100%;
+  height: 14px;
+  background: #e0e7ea;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+.barra-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #0d47a1, #03a9f4);
+  border-radius: 999px;
+  transition: width .25s ease;
+}
+.barra-fill.completo { background: #2e7d32; }
+.barra-fill.error { background: #c62828; }
+.barra-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.barra-pct { font-weight: 700; color: #0d47a1; font-size: 15px; }
+.detalle-tecnico { margin-top: 10px; font-size: 12px; color: #607d8b; }
+.detalle-tecnico summary { cursor: pointer; }
+.detalle-tecnico .log { margin-top: 6px; max-height: 180px; }
+
 .tabla { width: 100%; border-collapse: collapse; margin-top: 10px; }
 .tabla th, .tabla td { border: 1px solid #cfd8dc; padding: 8px 10px; text-align: left; font-size: 14px; }
 .tabla th { background: #eceff1; }
@@ -211,6 +240,87 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0d47a1; }
   gap: 10px;
   flex-wrap: wrap;
   margin: 0 0 14px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tarjeta de resultado (veredicto de renta)                           */
+/* ------------------------------------------------------------------ */
+.resultado-box {
+  border: 1px solid #cfd8dc;
+  border-radius: 10px;
+  padding: 18px;
+  background: #fafafa;
+  margin-top: 6px;
+}
+.resultado-veredicto {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  color: #fff;
+}
+.resultado-veredicto.verdict-no { background: linear-gradient(135deg, #2e7d32, #43a047); }
+.resultado-veredicto.verdict-si { background: linear-gradient(135deg, #ef6c00, #f57c00); }
+.resultado-icono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .25);
+  font-size: 20px;
+  font-weight: 700;
+  flex: none;
+}
+.resultado-titulo { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.resultado-cliente { font-size: 13px; opacity: .92; margin-top: 2px; }
+.resultado-chip {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 10px;
+  background: rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.resultado-cabecera { font-size: 13.5px; color: #37474f; margin: 12px 2px 8px; line-height: 1.5; }
+.tabla-topes { font-size: 13px; }
+.tabla-topes td, .tabla-topes th { padding: 7px 9px; }
+.etiqueta-excede { background: #ffebee; color: #b71c1c; }
+.resultado-nota {
+  font-size: 12px;
+  color: #6d4c00;
+  background: #fff8e1;
+  border-left: 3px solid #f9a825;
+  padding: 8px 10px;
+  border-radius: 0 6px 6px 0;
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+.resultado-acciones {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.resultado-acciones .boton { margin-top: 0; }
+
+/* Encabezado visible solo al imprimir (informe de la firma) */
+.print-solo { display: none; }
+.print-solo .print-titulo { font-size: 20px; font-weight: 800; color: #0d47a1; }
+.print-solo .print-sub { font-size: 13px; color: #455a64; margin: 2px 0 6px; }
+.print-solo .print-fecha { font-size: 13px; color: #607d8b; margin-bottom: 6px; }
+.print-solo hr { border: none; border-top: 2px solid #0d47a1; margin: 0 0 14px; }
+
+@media print {
+  body { background: #fff; display: block; padding: 0; }
+  .barra, .formulario, #mensaje, #progresoBox, .pie, .resultado-acciones { display: none !important; }
+  .print-solo { display: block; }
+  .tabla-envoltura { overflow: visible; }
+  .card { max-width: 100%; box-shadow: none; padding: 0; }
+  .resultado-box { border: none; background: #fff; padding: 0; }
 }
 
 @media (max-width: 640px) {

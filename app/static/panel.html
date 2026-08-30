@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>DIAN Web — Consulta</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260829r2" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20260829r3" />
 </head>
 <body>
   <header class="barra">
@@ -56,17 +56,58 @@
 
     <div id="progresoBox" class="oculto">
       <h3>Progreso</h3>
-      <div id="estadoJob" class="estado">En cola...</div>
-      <pre id="logProgreso" class="log"></pre>
+      <div class="barra-track" role="progressbar" id="barraTrack" aria-valuemin="0" aria-valuemax="100">
+        <div class="barra-fill" id="barraFill"></div>
+      </div>
+      <div class="barra-info">
+        <span id="estadoJob" class="estado">En cola...</span>
+        <span class="barra-pct" id="barraPct">0%</span>
+      </div>
+      <details class="detalle-tecnico">
+        <summary>Ver detalle técnico</summary>
+        <pre id="logProgreso" class="log"></pre>
+      </details>
     </div>
 
     <div id="descargaBox" class="oculto">
-      <a href="#" id="linkDescargar" class="boton">DESCARGAR RESULTADO</a>
+      <div class="resultado-box">
+        <div class="print-solo" id="printEncabezado">
+          <div class="print-titulo">Contador a tu servicio</div>
+          <div class="print-sub">Ricardo Cordoba y Ana Maria Rozo · Consultores tributarios</div>
+          <div class="print-fecha" id="printFecha"></div>
+          <hr />
+        </div>
+
+        <div class="resultado-veredicto verdict-no" id="resultadoVeredicto">
+          <span class="resultado-icono" id="resultadoIcono">&#10003;</span>
+          <div>
+            <div class="resultado-titulo" id="resultadoTitulo"></div>
+            <div class="resultado-cliente" id="resultadoCliente"></div>
+            <span class="resultado-chip oculto" id="resultadoVence"></span>
+          </div>
+        </div>
+
+        <p class="resultado-cabecera" id="resultadoCabecera"></p>
+
+        <table class="tabla tabla-topes" id="tablaTopes">
+          <thead>
+            <tr><th>Tope</th><th>Reportado</th><th>Umbral</th><th>Resultado</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+
+        <p class="resultado-nota oculto" id="resultadoNota"></p>
+
+        <div class="resultado-acciones">
+          <a href="#" id="linkDescargar" class="boton">DESCARGAR RESULTADO</a>
+          <button type="button" class="boton secundario" id="btnImprimir">Imprimir / Guardar PDF</button>
+        </div>
+      </div>
     </div>
   </div>
 
   <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.</footer>
 
-  <script src="/assets/app.js?v=20260829r2"></script>
+  <script src="/assets/app.js?v=20260829r3"></script>
 </body>
 </html>

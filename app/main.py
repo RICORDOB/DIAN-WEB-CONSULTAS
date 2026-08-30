@@ -314,6 +314,7 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
         "progreso": [],
         "final": None,
         "error": None,
+        "resultado": None,
         "dir": job_dir,
         "usuario": usuario,
         "creado": time.time(),
@@ -336,6 +337,7 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
                 )
                 job["estado"] = "done"
                 job["final"] = str(final)
+                job["resultado"] = runner.ultimo_analisis
                 auth.actualizar_consulta(
                     job_id, auth.ESTADO_DONE, resultado=Path(final).name
                 )
@@ -375,6 +377,7 @@ async def api_job(job_id: str, sesion: str | None = Cookie(default=None)):
         "progreso": job["progreso"][-50:],
         "final": job["final"],
         "error": job["error"],
+        "resultado": job["resultado"],
     }
 
 
