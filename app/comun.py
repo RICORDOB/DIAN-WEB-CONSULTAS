@@ -27,6 +27,15 @@ UVT_2025 = 49_799
 RESOLUCION_UVT = "Res. DIAN 000193 de 2024"
 NORMA_TOPES = "Art. 592 E.T. y Dec. 1625-2016 (art. 1.6.1.13.2.7)"
 
+# Aviso legal sobre el alcance de la Información Exógena (se muestra en el
+# panel y se anexa a las razones del libro Excel).
+AVISO_INFO_EXOGENA = (
+    "IMPORTANTE: Para cumplir con su obligación de declarar, la Información "
+    "Exógena Tributaria NO ES INDISPENSABLE y NO REEMPLAZA la información de "
+    "su realidad económica, ni lo exonera de declarar los valores totales que "
+    "correspondan y que son de su conocimiento exclusivo."
+)
+
 # Texto exacto del error "sin datos" de facturación electrónica en la DIAN
 TEXTO_SIN_DATOS_FE = "No se encontró información para el año seleccionado"
 

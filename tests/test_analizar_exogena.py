@@ -63,6 +63,7 @@ def test_topes_estructurados(runner, tmp_path):
     assert ingreso["reportado"] == INGRESOS_UMBRAL
     assert ingreso["umbral"] == INGRESOS_UMBRAL
     assert res["cabecera"]
+    assert "IMPORTANTE" in res["razones"]
 
 
 def test_reportes_vacio_devuelve_desconocido(runner, tmp_path):

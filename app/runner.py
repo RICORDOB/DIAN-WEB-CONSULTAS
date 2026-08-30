@@ -33,6 +33,7 @@ from playwright.async_api import async_playwright
 
 from .comun import (
     ANIO_EXOGENO,
+    AVISO_INFO_EXOGENA,
     CALENDARIO_RENTA_2026,
     NORMA_TOPES,
     REINTENTOS,
@@ -408,7 +409,7 @@ class DianRunner:
             "crédito, por lo que ese tope podría estar sobreestimado."
             if "Consumo TC" in valores else ""
         )
-        razones = cabecera + "\n" + cuerpo + nota
+        razones = cabecera + "\n" + cuerpo + nota + "\n\n" + AVISO_INFO_EXOGENA
 
         return {
             "nombre_cliente": nombre or "DESCONOCIDO",

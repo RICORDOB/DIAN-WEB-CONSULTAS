@@ -286,6 +286,17 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0d47a1; }
   font-weight: 600;
 }
 .resultado-cabecera { font-size: 13.5px; color: #37474f; margin: 12px 2px 8px; line-height: 1.5; }
+.resultado-aviso {
+  font-size: 12.5px;
+  color: #0d3c61;
+  background: #e3f2fd;
+  border-left: 4px solid #0d47a1;
+  padding: 10px 12px;
+  border-radius: 0 6px 6px 0;
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+.resultado-aviso strong { color: #b71c1c; }
 .tabla-topes { font-size: 13px; }
 .tabla-topes td, .tabla-topes th { padding: 7px 9px; }
 .etiqueta-excede { background: #ffebee; color: #b71c1c; }
