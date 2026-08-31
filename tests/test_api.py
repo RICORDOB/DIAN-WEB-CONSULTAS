@@ -199,6 +199,15 @@ def test_headers_de_seguridad(client, db):
     assert r.headers.get("referrer-policy") == "same-origin"
 
 
+def test_pagina_privacidad(client, db):
+    r = client.get("/privacidad")
+    assert r.status_code == 200
+    assert "Política de Privacidad" in r.text
+    assert "Ricardo Córdoba y Ana María Rozo" in r.text or "Ricardo Cordoba" in r.text
+    # El pie conserva la línea de desarrollo y añade la de derechos
+    assert "Todos los derechos reservados" in r.text
+
+
 def test_consulta_expone_resultado_al_panel(client, db, admin, monkeypatch, tmp_path):
     """Un job completado expone el análisis estructurado vía /api/job/{id}."""
     from app import main as mainmod

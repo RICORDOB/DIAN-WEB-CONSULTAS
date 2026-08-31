@@ -203,6 +203,13 @@ async def pag_contadores(sesion: str | None = Cookie(default=None)):
     return HTMLResponse(html)
 
 
+@app.get("/privacidad", response_class=HTMLResponse)
+async def pag_privacidad():
+    """Política de privacidad y tratamiento de datos (página pública)."""
+    html = (STATIC_DIR / "privacidad.html").read_text(encoding="utf-8")
+    return HTMLResponse(html)
+
+
 class _AssetsSinCache(StaticFiles):
     """Estáticos con revalidación forzada: evita que navegador/edge sigan usando
     JS/CSS viejos tras un despliegue (los tabs y listados dependen de cargar la
