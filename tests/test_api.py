@@ -155,6 +155,43 @@ def test_admin_no_puede_eliminarse_ni_eliminar_un_admin(client, db, admin):
     assert r.status_code == 400
 
 
+def test_admin_activa_y_desactiva_acceso_contador(client, db, admin):
+    cookie = _login(client, admin, "admin123").cookies.get("sesion")
+
+    # Alta y aprobación de un usuario común
+    client.post("/api/registro", json={"usuario": "contab", "password": "clave123"})
+    client.post("/api/admin/decidir", json={"usuario": "contab", "aprobar": True},
+                cookies={"sesion": cookie})
+
+    # Sin acceso: /contadores redirige a /panel (client limpio para no mezclar jar del admin)
+    c = TestClient(app, follow_redirects=False)
+    c_cookie = _login(c, "contab", "clave123").cookies.get("sesion")
+    r = c.get("/contadores")
+    assert r.status_code == 303 and "/panel" in r.headers["location"]
+    assert c.get("/api/me").json()["acceso_contador"] is False
+
+    # Admin activa el acceso
+    r = client.post("/api/admin/contador", json={"usuario": "contab", "activar": True},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["acceso_contador"] is True
+
+    # Ahora sí ve el panel de contadores
+    r = c.get("/contadores")
+    assert r.status_code == 200
+    assert c.get("/api/me").json()["acceso_contador"] is True
+
+    # Desactiva
+    r = client.post("/api/admin/contador", json={"usuario": "contab", "activar": False},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["acceso_contador"] is False
+    r = c.get("/contadores")
+    assert r.status_code == 303
+
+    # Un usuario común no puede activar a otros
+    assert c.post("/api/admin/contador", json={"usuario": "contab", "activar": True}
+                  ).status_code == 403
+
+
 def test_headers_de_seguridad(client, db):
     r = client.get("/")
     assert r.headers.get("x-frame-options") == "DENY"

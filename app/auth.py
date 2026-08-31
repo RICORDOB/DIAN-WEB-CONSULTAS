@@ -24,6 +24,11 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from . import db as _db
 
+# Roles de un usuario
+ROL_USUARIO = "usuario"
+ROL_CONTADOR = "contador"
+ROL_ADMIN = "admin"
+
 # Estados de un usuario
 PENDIENTE = "pendiente"
 APROBADO = "aprobado"
@@ -114,6 +119,12 @@ def iniciar_db() -> None:
             )
             """
         )
+        # Migración: columna de acceso de pago a consultas masivas (contador).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()}
+        if "acceso_contador" not in cols:
+            conn.execute(
+                "ALTER TABLE usuarios ADD COLUMN acceso_contador INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS registros (
@@ -284,8 +295,8 @@ def bloquear_usuario(usuario: str, bloquear: bool, admin: str) -> dict:
 def listar_pendientes() -> list[dict]:
     with _conectar() as conn:
         rows = conn.execute(
-            "SELECT id, usuario, rol, estado, creado_en FROM usuarios "
-            "ORDER BY creado_en DESC"
+            "SELECT id, usuario, rol, estado, creado_en, acceso_contador "
+            "FROM usuarios ORDER BY creado_en DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -336,6 +347,37 @@ def es_admin(usuario: str) -> bool:
             "SELECT rol FROM usuarios WHERE usuario = ?", (usuario,)
         ).fetchone()
     return bool(row and row["rol"] == "admin")
+
+
+def tiene_acceso_contador(usuario: str) -> bool:
+    """Un usuario tiene acceso a consultas masivas si es admin o si el admin le
+    activó el acceso de pago (columna acceso_contador)."""
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT rol, acceso_contador FROM usuarios WHERE usuario = ?", (usuario,)
+        ).fetchone()
+    if not row:
+        return False
+    return row["rol"] == ROL_ADMIN or bool(row["acceso_contador"])
+
+
+def set_acceso_contador(usuario: str, activar: bool, admin: str) -> dict:
+    """Activa o desactiva el acceso de pago a consultas masivas de un usuario."""
+    nuevo = 1 if activar else 0
+    with _conectar() as conn:
+        cur = conn.execute(
+            "UPDATE usuarios SET acceso_contador = ? WHERE usuario = ?",
+            (nuevo, usuario),
+        )
+        if cur.rowcount == 0:
+            raise AuthError(f"No se encontró el usuario '{usuario}'.")
+        conn.execute(
+            "INSERT INTO registros (accion, quien, usuario, cuando) "
+            "VALUES (?, ?, ?, ?)",
+            ("activar_contador" if activar else "desactivar_contador", admin,
+             usuario, time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"usuario": usuario, "acceso_contador": bool(nuevo)}
 
 
 # ---------------------------------------------------------------------------

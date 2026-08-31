@@ -197,6 +197,10 @@ function configurarSesion() {
     if (!data.autenticado) { window.location.href = "/"; return; }
     usuarioSpan.textContent = data.usuario;
     if (linkDev && data.rol === "admin") linkDev.classList.remove("oculto");
+    const linkCont = document.getElementById("linkContador");
+    if (linkCont && (data.rol === "admin" || data.acceso_contador)) {
+      linkCont.classList.remove("oculto");
+    }
   });
 
   if (btnSalir) {
@@ -415,6 +419,119 @@ function iniciarPanel() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Panel de consultas masivas (contadores.html)                        */
+/* ------------------------------------------------------------------ */
+const ETIQUETA_BATCH = {
+  ok: "Exitoso",
+  error_credenciales: "Error credenciales",
+  desconocido: "Resultado desconocido",
+  excepcion: "Excepción",
+};
+
+function iniciarContadores() {
+  configurarSesion();
+  registrarServiceWorker();
+  const form = document.getElementById("masivaForm");
+  const archivo = document.getElementById("archivoXlsx");
+  const mensaje = document.getElementById("mensaje");
+  const progresoBox = document.getElementById("progresoBox");
+  const tablaBox = document.getElementById("tablaBox");
+  const descargaBox = document.getElementById("descargaBox");
+  const linkDescargar = document.getElementById("linkDescargar");
+  const logProgreso = document.getElementById("logProgreso");
+  const estadoJob = document.getElementById("estadoJob");
+  const barraFill = document.getElementById("barraFill");
+  const barraPct = document.getElementById("barraPct");
+  const btnIniciar = document.getElementById("btnIniciar");
+
+  let batchId = null;
+  let pollTimer = null;
+  let total = 0;
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (batchId) { mostrarMensaje(mensaje, "Ya hay una consulta masiva en curso.", "info"); return; }
+    if (!archivo.files || !archivo.files[0]) { mostrarMensaje(mensaje, "Selecciona un archivo .xlsx.", "error"); return; }
+
+    progresoBox.classList.remove("oculto");
+    tablaBox.classList.add("oculto");
+    descargaBox.classList.add("oculto");
+    logProgreso.textContent = "";
+    estadoJob.textContent = "Subiendo archivo...";
+    btnIniciar.disabled = true;
+
+    const fd = new FormData();
+    fd.append("archivo", archivo.files[0]);
+
+    peticion("/api/masiva/upload", { method: "POST", body: fd }).then((resp) => {
+      if (!resp.ok) {
+        btnIniciar.disabled = false;
+        return resp.json().then((d) => mostrarMensaje(mensaje, extraerDetalle(d), "error"));
+      }
+      return resp.json().then((data) => {
+        batchId = data.batch_id;
+        total = data.total || 0;
+        estadoJob.textContent = "Procesando 0/" + total + " clientes...";
+        pollTimer = setInterval(consultarBatch, 1500);
+      });
+    });
+  });
+
+  function consultarBatch() {
+    if (!batchId) return;
+    peticion("/api/masiva/" + batchId).then((resp) => {
+      if (!resp.ok) { clearInterval(pollTimer); btnIniciar.disabled = false; return; }
+      return resp.json().then((data) => {
+        logProgreso.textContent = data.progreso.join("\n");
+        logProgreso.scrollTop = logProgreso.scrollHeight;
+        const pct = data.total ? Math.min(100, Math.round((data.done / data.total) * 100)) : 0;
+        barraFill.style.width = pct + "%";
+        barraPct.textContent = pct + "%";
+
+        if (data.estado === "done") {
+          clearInterval(pollTimer);
+          barraFill.classList.add("completo");
+          estadoJob.textContent = "Consulta masiva completada.";
+          pintarTabla(data.detalle || []);
+          descargaBox.classList.remove("oculto");
+          linkDescargar.href = "/api/masiva/" + batchId + "/descargar";
+          btnIniciar.disabled = false;
+          mostrarMensaje(mensaje, "Consulta masiva terminada.", "ok");
+        } else if (data.estado === "error") {
+          clearInterval(pollTimer);
+          barraFill.classList.add("error");
+          estadoJob.textContent = "Error en el proceso.";
+          mostrarMensaje(mensaje, data.error || "Falló el proceso.", "error");
+          btnIniciar.disabled = false;
+        } else if (data.estado === "running") {
+          estadoJob.textContent = "Procesando " + data.done + "/" + data.total + " clientes...";
+        } else {
+          estadoJob.textContent = "En cola...";
+        }
+      });
+    });
+  }
+
+  function pintarTabla(detalle) {
+    const tbody = document.querySelector("#tablaFilas tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    detalle.forEach((f) => {
+      const fila = document.createElement("tr");
+      const estado = f.error ? "error_credenciales" : "ok";
+      fila.innerHTML =
+        "<td>" + f.fila_excel + "</td>" +
+        "<td>" + escapar(f.numero_documento) + "</td>" +
+        '<td><span class="etiqueta etiqueta-' + (f.error ? "error" : "ok") + '">' +
+          (f.error ? ETIQUETA_BATCH.error_credenciales : ETIQUETA_BATCH.ok) + "</span></td>" +
+        "<td>" + escapar(f.final || f.error || "—") + "</td>";
+      tbody.appendChild(fila);
+    });
+    tablaBox.classList.remove("oculto");
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Panel desarrollador (dev.html)                                      */
 /* ------------------------------------------------------------------ */
 let _chartDias = null;
@@ -467,7 +584,9 @@ function iniciarDev() {
           const fila = document.createElement("tr");
           fila.innerHTML =
             "<td>" + escapar(u.usuario) + "</td>" +
-            "<td>" + escapar(u.rol) + "</td>" +
+            "<td>" + escapar(u.rol) +
+              (u.acceso_contador ? ' <span class="etiqueta etiqueta-aprobado">Contador</span>' : "") +
+              "</td>" +
             '<td><span class="etiqueta etiqueta-' + u.estado + '">' +
               (ETIQUETA_ESTADO[u.estado] || escapar(u.estado)) + "</span></td>" +
             "<td>" + escapar(u.creado_en) + "</td>" +
@@ -475,6 +594,11 @@ function iniciarDev() {
 
           const acciones = fila.lastElementChild;
           if (u.rol !== "admin") {
+            acciones.appendChild(btnAccion(
+              u.acceso_contador ? "Quitar Contador" : "Activar Contador",
+              u.acceso_contador ? "secundario" : "ok",
+              () => alternarContador(u.usuario, !u.acceso_contador)
+            ));
             if (u.estado === "pendiente") {
               acciones.appendChild(btnAccion("Aprobar", "ok", () => decidir(u.usuario, true)));
               acciones.appendChild(btnAccion("Rechazar", "peligro", () => decidir(u.usuario, false)));
@@ -508,6 +632,20 @@ function iniciarDev() {
     }).then((resp) => {
       if (resp.ok) {
         mostrarMensaje(mensaje, aprobar ? "Alta aprobada." : "Solicitud rechazada.", "ok");
+        cargar();
+      } else { manejarError(resp, mensaje); }
+    });
+  }
+
+  function alternarContador(usuario, activar) {
+    peticion("/api/admin/contador", {
+      method: "POST",
+      body: JSON.stringify({ usuario, activar }),
+    }).then((resp) => {
+      if (resp.ok) {
+        mostrarMensaje(mensaje,
+          activar ? "Acceso a Consultas Masivas activado." : "Acceso a Consultas Masivas desactivado.",
+          "ok");
         cargar();
       } else { manejarError(resp, mensaje); }
     });
@@ -710,5 +848,7 @@ document.addEventListener("DOMContentLoaded", () => {
     iniciarPanel();
   } else if (path === "/dev") {
     iniciarDev();
+  } else if (path === "/contadores") {
+    iniciarContadores();
   }
 });

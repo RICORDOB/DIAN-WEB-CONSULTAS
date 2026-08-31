@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0d47a1" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
+  <title>DIAN Web — Contadores</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260829r5" />
+</head>
+<body>
+  <header class="barra">
+    <strong>Consultas Masivas</strong>
+    <div>
+      <span id="usuarioActual"></span>
+      <a href="/panel" class="v-inline">Consulta individual</a>
+      <a href="/contadores" class="v-inline">Contadores</a>
+      <a href="/dev" class="v-inline oculto" id="linkDev">Panel desarrollador</a>
+      <button class="boton-enlace" id="btnSalir">Salir</button>
+    </div>
+  </header>
+
+  <div class="card panel-ancho">
+    <h1>Consulta masiva (Contadores)</h1>
+    <p class="subtitulo">Sube un archivo .xlsx con una fila por cliente (columnas: tipo_documento, numero_documento, contrasena) y el sistema procesa todos secuencialmente.</p>
+
+    <div id="mensaje" class="mensaje oculto"></div>
+
+    <form id="masivaForm" class="formulario">
+      <label for="archivoXlsx">Archivo .xlsx de clientes</label>
+      <input type="file" id="archivoXlsx" accept=".xlsx" required />
+      <button type="submit" class="boton" id="btnIniciar">INICIAR CONSULTA MASIVA</button>
+    </form>
+
+    <div id="progresoBox" class="oculto">
+      <h3>Progreso</h3>
+      <div class="barra-track" role="progressbar" id="barraTrack" aria-valuemin="0" aria-valuemax="100">
+        <div class="barra-fill" id="barraFill"></div>
+      </div>
+      <div class="barra-info">
+        <span id="estadoJob" class="estado">En cola...</span>
+        <span class="barra-pct" id="barraPct">0%</span>
+      </div>
+      <details class="detalle-tecnico">
+        <summary>Ver detalle técnico</summary>
+        <pre id="logProgreso" class="log"></pre>
+      </details>
+    </div>
+
+    <div id="tablaBox" class="oculto">
+      <h3>Resultado por fila</h3>
+      <div class="tabla-envoltura">
+        <table class="tabla" id="tablaFilas">
+          <thead>
+            <tr><th>Fila</th><th>Documento</th><th>Estado</th><th>Detalle</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="descargaBox" class="oculto">
+      <a href="#" id="linkDescargar" class="boton">DESCARGAR RESULTADO (ZIP)</a>
+    </div>
+  </div>
+
+  <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.</footer>
+
+  <script src="/assets/app.js?v=20260829r5"></script>
+</body>
+</html>

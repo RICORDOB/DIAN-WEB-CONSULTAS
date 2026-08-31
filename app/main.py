@@ -29,19 +29,22 @@ Rutas:
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import shutil
 import time
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Cookie, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Cookie, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import auth
+from . import batch as batch_mod
 from . import push
 from .runner import DianRunner
 
@@ -61,6 +64,10 @@ _job_lock = asyncio.Lock()
 
 # Almacén en memoria de jobs: id -> {estado, progreso[], final, error, dir}
 _jobs: dict[str, dict] = {}
+
+# Almacén en memoria de batches masivos: id -> {estado, usuario, total, done,
+# progresa, resultado, detalle[], dir}
+_batches: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
 # Seguridad: headers + rate limiting simple (in-memory por IP)
@@ -127,6 +134,11 @@ class DecidirIn(BaseModel):
     aprobar: bool
 
 
+class ContadorIn(BaseModel):
+    usuario: str
+    activar: bool
+
+
 class PushRegIn(BaseModel):
     endpoint: str
     p256dh: str
@@ -176,6 +188,18 @@ async def pag_dev(sesion: str | None = Cookie(default=None)):
     if not s or s[1] != "admin":
         return RedirectResponse("/panel", status_code=303)
     html = (STATIC_DIR / "dev.html").read_text(encoding="utf-8")
+    return HTMLResponse(html)
+
+
+@app.get("/contadores", response_class=HTMLResponse)
+async def pag_contadores(sesion: str | None = Cookie(default=None)):
+    """Panel de consultas masivas. Solo admin o usuarios con acceso activado."""
+    s = _sesion(sesion)
+    if not s:
+        return RedirectResponse("/", status_code=303)
+    if not (s[1] == "admin" or auth.tiene_acceso_contador(s[0])):
+        return RedirectResponse("/panel", status_code=303)
+    html = (STATIC_DIR / "contadores.html").read_text(encoding="utf-8")
     return HTMLResponse(html)
 
 
@@ -253,7 +277,9 @@ async def api_me(sesion: str | None = Cookie(default=None)):
     s = _sesion(sesion)
     if not s:
         return {"autenticado": False}
-    return {"autenticado": True, "usuario": s[0], "rol": s[1]}
+    acceso = auth.tiene_acceso_contador(s[0])
+    return {"autenticado": True, "usuario": s[0], "rol": s[1],
+            "acceso_contador": acceso}
 
 
 # ---------------------------------------------------------------------------
@@ -397,14 +423,134 @@ async def api_descargar(job_id: str, sesion: str | None = Cookie(default=None)):
 
 
 def _limpiar_jobs_viejos() -> None:
-    """Limpia jobs terminados con más de 1 hora de antigüedad (libera espacio
-    sin borrar resultados recién generados)."""
+    """Limpia jobs/batches terminados con más de 1 hora de antigüedad (libera
+    espacio sin borrar resultados recién generados)."""
     ahora = time.time()
     for job_id in list(_jobs.keys()):
         job = _jobs[job_id]
         if job["estado"] in ("done", "error") and ahora - job["creado"] > 3600:
             shutil.rmtree(job["dir"], ignore_errors=True)
             _jobs.pop(job_id, None)
+    for batch_id in list(_batches.keys()):
+        b = _batches[batch_id]
+        if b["estado"] in ("done", "error") and ahora - b["creado"] > 3600:
+            shutil.rmtree(b["dir"], ignore_errors=True)
+            _batches.pop(batch_id, None)
+
+
+# ---------------------------------------------------------------------------
+# API: consultas masivas (panel Contadores)
+# ---------------------------------------------------------------------------
+@app.post("/api/masiva/upload")
+async def api_masiva_upload(archivo: UploadFile = File(...),
+                            sesion: str | None = Cookie(default=None)):
+    """Sube un .xlsx y lanza la consulta masiva (una fila = un cliente)."""
+    s = _puede_contador(sesion)
+    usuario = s[0]
+    if not (archivo.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="El archivo debe ser .xlsx.")
+
+    batch_id = uuid.uuid4().hex
+    bdir = JOBS_DIR / f"masiva_{batch_id}"
+    bdir.mkdir(parents=True, exist_ok=True)
+    entrada = bdir / "entrada.xlsx"
+    contenido = await archivo.read()
+    if len(contenido) > 10 * 1024 * 1024:
+        shutil.rmtree(bdir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail="El archivo supera los 10 MB.")
+    entrada.write_bytes(contenido)
+
+    try:
+        filas, _ = batch_mod.cargar_filas(entrada)
+    except ValueError as exc:
+        shutil.rmtree(bdir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _batches[batch_id] = {
+        "estado": "queued",
+        "usuario": usuario,
+        "total": len(filas),
+        "done": 0,
+        "progreso": [],
+        "resumen": None,
+        "error": None,
+        "detalle": [],
+        "dir": str(bdir),
+        "creado": time.time(),
+    }
+
+    async def _ejecutar_batch():
+        async with _job_lock:
+            b = _batches[batch_id]
+            b["estado"] = "running"
+
+            def cb(grupo, mensaje, detalle=None):
+                b["progreso"].append(mensaje)
+                if grupo == "fila":
+                    b["done"] += 1
+                    if detalle:
+                        b["detalle"].append(detalle)
+                elif grupo == "resumen":
+                    b["resumen"] = mensaje
+
+            try:
+                resumen = await asyncio.to_thread(
+                    batch_mod.ejecutar_batch, bdir, entrada, cb
+                )
+                b["estado"] = "done"
+                b["detalle"] = resumen["detalle"]
+            except Exception as exc:  # noqa: BLE001
+                b["estado"] = "error"
+                b["error"] = f"{type(exc).__name__}: {exc}"
+
+    asyncio.create_task(_ejecutar_batch())
+    return {"batch_id": batch_id, "total": len(filas)}
+
+
+@app.get("/api/masiva/{batch_id}")
+async def api_masiva(batch_id: str, sesion: str | None = Cookie(default=None)):
+    s = _puede_contador(sesion)
+    b = _batches.get(batch_id)
+    if not b or not (b["usuario"] == s[0] or s[1] == "admin"):
+        raise HTTPException(status_code=404, detail="Batch no encontrado.")
+    return {
+        "estado": b["estado"],
+        "total": b["total"],
+        "done": b["done"],
+        "progreso": b["progreso"][-40:],
+        "resumen": b["resumen"],
+        "error": b["error"],
+        "detalle": b["detalle"],
+    }
+
+
+@app.get("/api/masiva/{batch_id}/descargar")
+async def api_masiva_descargar(batch_id: str, sesion: str | None = Cookie(default=None)):
+    s = _puede_contador(sesion)
+    b = _batches.get(batch_id)
+    if not b or not (b["usuario"] == s[0] or s[1] == "admin"):
+        raise HTTPException(status_code=404, detail="Batch no encontrado.")
+    if b["estado"] != "done":
+        raise HTTPException(status_code=409, detail="El batch aún no termina.")
+    bdir = Path(b["dir"])
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        entrada = bdir / "entrada.xlsx"
+        if entrada.exists():
+            zf.write(entrada, "resultado_masiva.xlsx")
+        clientes = bdir / "clientes"
+        if clientes.exists():
+            for f in sorted(clientes.glob("*.xls")):
+                zf.write(f, f"clientes/{f.name}")
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="masiva_{batch_id[:8]}.zip"',
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +560,16 @@ def _requiere_admin(sesion) -> tuple[str, str]:
     s = _sesion(sesion)
     if not s or s[1] != "admin":
         raise HTTPException(status_code=403, detail="Requiere rol de administrador.")
+    return s
+
+
+def _puede_contador(sesion) -> tuple[str, str]:
+    """Acepta admin o usuarios con acceso de pago activado a consultas masivas."""
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=403, detail="Sesión no válida.")
+    if not (s[1] == "admin" or auth.tiene_acceso_contador(s[0])):
+        raise HTTPException(status_code=403, detail="No tienes acceso a Consultas Masivas.")
     return s
 
 
@@ -470,6 +626,16 @@ async def api_eliminar(body: EliminarIn, sesion: str | None = Cookie(default=Non
     except auth.AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return res
+
+
+@app.post("/api/admin/contador")
+async def api_admin_contador(body: ContadorIn, sesion: str | None = Cookie(default=None)):
+    """Activa/desactiva el acceso de pago a consultas masivas de un usuario."""
+    admin = _requiere_admin(sesion)[0]
+    try:
+        return auth.set_acceso_contador(body.usuario, body.activar, admin)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/admin/estadisticas")

@@ -1,9 +1,9 @@
 /* Service worker DIAN Web: caché controlada de estáticos + push notifications. */
-const CACHE = "dian-web-v3";
+const CACHE = "dian-web-v4";
 const ASSETS = [
   "/",
-  "/assets/styles.css?v=20260829r4",
-  "/assets/app.js?v=20260829r4",
+  "/assets/styles.css?v=20260829r5",
+  "/assets/app.js?v=20260829r5",
 ];
 
 self.addEventListener("install", (e) => {
