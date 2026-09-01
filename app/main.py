@@ -523,8 +523,13 @@ async def api_masiva_upload(archivo: UploadFile = File(...),
                     b["resumen"] = mensaje
 
             try:
+                # ejecutar_batch es async; to_thread NO espera corrutinas, por eso
+                # la envolvemos en asyncio.run para ejecutarla en su propio event
+                # loop dentro del hilo y obtener el dict real (no una corrutina).
                 resumen = await asyncio.to_thread(
-                    batch_mod.ejecutar_batch, bdir, entrada, cb
+                    lambda: asyncio.run(
+                        batch_mod.ejecutar_batch(bdir, entrada, cb)
+                    )
                 )
                 b["estado"] = "done"
                 b["detalle"] = resumen["detalle"]

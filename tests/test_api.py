@@ -1,13 +1,16 @@
 """Smoke de la API web: flujo de alta→aprobación→bloqueo, revocación en vivo,
 dashboard del admin y seguridad básica, usando TestClient."""
 
+import io
 import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 from app import auth
+from app import batch as batch_mod
 from app.main import _ratelimit, app
 
 
@@ -221,6 +224,60 @@ def test_plantilla_masiva_requiere_acceso_contador(client, db, admin):
     assert cab == ["tipo_documento", "numero_documento", "contrasena",
                    "fecha_vencimiento", "estado"]
     assert ws.max_row == 1  # sin fila de ejemplo
+
+
+def test_upload_masiva_procesa_sin_error_de_corutina(client, db, admin, monkeypatch):
+    """Regresión: el upload debe procesar el batch a 'done', no explotar con
+    'TypeError: coroutine object is not subscriptable' al leer el resumen."""
+    admin_cookie = _login(client, admin, "admin123").cookies.get("sesion")
+
+    # Crear un .xlsx de entrada con 2 clientes
+    buf = io.BytesIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["tipo_documento", "numero_documento", "contrasena", "estado"])
+    ws.append(["Cédula de Ciudadanía", "111", "c1", ""])
+    ws.append(["Cédula de Ciudadanía", "222", "c2", ""])
+    wb.save(buf)
+
+    class RunnerStub:
+        def __init__(self, job_dir, progreso=None):
+            self.job_dir = job_dir
+            self.ultima_fecha_vencimiento = "2026-10-16"
+            (job_dir / "clientes").mkdir(parents=True, exist_ok=True)
+
+        async def consulta_individual(self, tipo, numero, contrasena):
+            final = self.job_dir / "clientes" / f"{numero}.xls"
+            final.write_bytes(b"x")
+            return final
+
+    monkeypatch.setattr(batch_mod, "DianRunner", RunnerStub)
+
+    r = client.post(
+        "/api/masiva/upload",
+        files={"archivo": ("clientes.xlsx", buf.getvalue(),
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        cookies={"sesion": admin_cookie},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "batch_id" in data and data["total"] == 2
+
+    # Polling hasta que el batch termine (o falle)
+    batch_id = data["batch_id"]
+    estado = None
+    for _ in range(40):
+        resp = client.get(f"/api/masiva/{batch_id}", cookies={"sesion": admin_cookie})
+        assert resp.status_code == 200
+        estado = resp.json()["estado"]
+        if estado in ("done", "error"):
+            break
+        time.sleep(0.1)
+
+    cuerpo = resp.json()
+    assert cuerpo["estado"] == "done", cuerpo.get("error")
+    assert cuerpo["total"] == 2
+    assert cuerpo["done"] == 2
 
 
 def test_headers_de_seguridad(client, db):
