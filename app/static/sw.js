@@ -1,9 +1,9 @@
-/* Service worker DIAN Web: caché controlada de estáticos + push notifications. */
-const CACHE = "dian-web-v6";
+/* Service worker ExoRenta: caché controlada de estáticos + push notifications. */
+const CACHE = "exorenta-v1";
 const ASSETS = [
   "/",
-  "/assets/styles.css?v=20260829r7",
-  "/assets/app.js?v=20260829r7",
+  "/assets/styles.css?v=20260829r8",
+  "/assets/app.js?v=20260829r8",
 ];
 
 self.addEventListener("install", (e) => {
@@ -46,12 +46,12 @@ self.addEventListener("fetch", (e) => {
 });
 
 self.addEventListener("push", (e) => {
-  let datos = { titulo: "Consulta DIAN", cuerpo: "Tu consulta ha terminado." };
+  let datos = { titulo: "ExoRenta", cuerpo: "Tu consulta ha terminado." };
   if (e.data) {
     try { datos = Object.assign(datos, e.data.json()); } catch (_) { /* noop */ }
   }
   e.waitUntil(
-    self.registration.showNotification(datos.titulo || "Consulta DIAN", {
+    self.registration.showNotification(datos.titulo || "ExoRenta", {
       body: datos.cuerpo || "",
       icon: "/assets/icons/icon-192.png",
       badge: "/assets/icons/icon-192.png",

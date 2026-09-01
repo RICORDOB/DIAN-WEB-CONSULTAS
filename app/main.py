@@ -52,7 +52,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 JOBS_DIR = Path(os.environ.get("APP_JOBS_DIR", BASE_DIR / "jobs"))
 
-app = FastAPI(title="DIAN Web", docs_url="/docs", openapi_url="/openapi.json")
+app = FastAPI(title="ExoRenta", docs_url="/docs", openapi_url="/openapi.json")
 
 # Inicializa directorio y base de datos al cargar (además del startup event), de
 # modo que funcione también en pruebas que no disparan eventos de ciclo de vida.

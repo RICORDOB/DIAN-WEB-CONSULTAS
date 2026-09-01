@@ -1,6 +1,6 @@
 {
-  "name": "Consultas DIAN",
-  "short_name": "DIAN Web",
+  "name": "ExoRenta",
+  "short_name": "ExoRenta",
   "description": "Consultas de información exógena y renta en la DIAN.",
   "id": "/panel",
   "start_url": "/panel",
