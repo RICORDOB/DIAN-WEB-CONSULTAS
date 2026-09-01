@@ -162,6 +162,17 @@ pytest -q
 
 La lista completa de endpoints, métodos y protección está en **`API.md`**.
 
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| `README.md` | Este archivo: visión, estructura, configuración, uso |
+| `API.md` | Todos los endpoints (método, protección, cuerpo, respuesta) |
+| `GUIA_USUARIO.md` | Guía de uso (no técnica) para contadores y usuarios finales |
+| `DEPLOY_RENDER.md` | Despliegue: CI automático, variables, backup, solución de problemas |
+| `RESUMEN_PROYECTO_WEB.txt` | Resumen ejecutivo del proyecto web actual |
+| `RESUMEN_SCRIPT_ORIGINAL.txt` | (histórico) resumen del script local `dian_login.py` |
+
 ## Notas técnicas (gotchas conocidos)
 
 - La **versión de `playwright` en `requirements.txt` debe coincidir** con la etiqueta

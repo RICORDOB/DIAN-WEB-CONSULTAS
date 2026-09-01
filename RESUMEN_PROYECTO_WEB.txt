@@ -1,0 +1,133 @@
+=====================================================================
+RESUMEN DE PROYECTO — DIAN Web (Consulta por navegador)
+=====================================================================
+Última actualización: 2026-08-31
+Estado: PROYECTO WEB activo. Consultas individuales y MASIVAS (panel
+Contadores con acceso de pago), notificaciones push, política de
+privacidad y despliegue continuo en Render.
+
+(El anterior RESUMEN_PROYECTO.txt pasó a RESUMEN_SCRIPT_ORIGINAL.txt,
+que documenta el script local dian_login.py + Google Drive. Este
+archivo resume la VERSIÓN WEB.)
+
+------------------------------------------------------------------------
+QUÉ ES
+------------------------------------------------------------------------
+Aplicación web (FastAPI + Playwright) que replica la automatización de
+consulta a la DIAN (información exógena, determinación de renta y
+facturación electrónica) pero accesible desde CUALQUIER dispositivo por
+un navegador (https), sin instalar nada en el equipo del usuario.
+
+  Repo      : https://github.com/RICORDOB/DIAN-WEB-CONSULTAS (main)
+  URL prod  : https://dian-web.onrender.com
+  Servicio  : srv-d9v6jam7bikc73bt9rn0 (Render, Docker)
+  Tests     : pytest (52)
+
+------------------------------------------------------------------------
+ARQUITECTURA (app/)
+------------------------------------------------------------------------
+  main.py   -> API FastAPI + vistas HTML + gestión de jobs/batches (+ rate limit, sesiones)
+  runner.py -> núcleo reutilizado: login DIAN, descargas, análisis de renta, armado .xls
+  batch.py  -> motor de consultas MASIVAS: plantilla, cargar filas, ejecutar, estados
+  auth.py   -> usuarios, alta por aprobación, bloqueos, roles, sesiones firmadas, historial
+  db.py     -> persistencia con DOS backends: Turso (libSQL nube) y SQLite local (fallback)
+  push.py   -> notificaciones push (VAPID + suscripciones)
+  comun.py  -> constantes compartidas: UVT, topes, selectores, calendario de vencimientos
+  static/   -> index, panel, dev, contadores, privacidad, styles.css, app.js, sw.js, manifest
+
+Frontend: HTML/CSS/JS vanilla + PWA (service worker sw.js con caché versionada,
+cache-buster ?v= en los assets, manifest.webmanifest). Sin framework.
+
+------------------------------------------------------------------------
+BASES DE DATOS (persistencia)
+------------------------------------------------------------------------
+  - Turso/libSQL (HTTP v2) si existen TURSO_DB_URL + TURSO_AUTH_TOKEN.
+  - SQLite local como fallback (desarrollo/pruebas).
+  - Tablas (auth.iniciar_db): usuarios, consultas, registros,
+    push_suscripciones, config (VAPID).
+  - Columnas del usuario: rol (usuario|admin|contador), estado
+    (pendiente|aprobado|bloqueado), acceso_contador (int, migrada
+    automáticamente si no existe).
+
+Seguridad de datos de clientes:
+  - Número de documento y contraseña DIAN SOLO en memoria durante la
+    consulta. NUNCA se persisten ni en BD ni en reportes.
+  - Las contraseñas de las cuentas se guardan con hash PBKDF2 + salt.
+  - El historial guarda usuario, tipo, fechas y estado (sin documento).
+
+------------------------------------------------------------------------
+ROLES Y FLUJO
+------------------------------------------------------------------------
+  admin (APP_ADMIN_USER):
+    - Aprueba/rechaza altas (/dev), bloquea/desbloquea (revoca sesión
+      en vivo), ELIMINA cuentas, activa/desactiva Contador.
+    - No puede modificarse/bloquearse/eliminarse a sí mismo.
+  usuario común:
+    - Registro queda 'pendiente'; entra solo tras aprobación (/panel).
+  contador:
+    - Usuario con acceso_contador activado por el admin; entra a
+      /contadores para consultas masivas de pago.
+
+Flujo de alta:
+  1) Usuario se registra (/) -> pendiente.
+  2) Admin aprueba desde /dev.
+  3) Usuario inicia sesión y usa /panel.
+
+------------------------------------------------------------------------
+CONSULTA INDIVIDUAL (/panel)
+------------------------------------------------------------------------
+  POST /api/consulta {tipo, numero_documento, contrasena} -> job_id
+  GET  /api/job/{id}           -> estado/progreso
+  GET  /api/job/{id}/descargar -> .xls de 3 hojas (Exógena / Renta / FE)
+
+------------------------------------------------------------------------
+CONSULTA MASIVA (/contadores)
+------------------------------------------------------------------------
+  Requiere acceso_contador (activado por el admin).
+  - Botón DESCARGAR PLANTILLA (/api/masiva/plantilla):
+    columnas tipo_documento | numero_documento | contrasena |
+    fecha_vencimiento | estado   (solo encabezados, sin fila de ejemplo)
+  - POST /api/masiva/upload (multipart, .xlsx, máx 10 MB) -> batch_id.
+    Valida las 3 columnas requeridas; procesa una fila por cliente,
+    secuencialmente, con consulta individual.
+  - GET /api/masiva/{batch_id} -> estado/progreso/detalle.
+  - GET /api/masiva/{batch_id}/descargar -> ZIP con resultado_masiva.xlsx
+    (estados alimentados) + clientes/*.xls (un archivo por cliente ok).
+  Estados por fila: ok | error_credenciales | desconocido | excepcion.
+  Al terminar, el sistema ALIMENTA:
+    - estado        : resultado del cliente.
+    - fecha_vencimiento: fecha del calendario DIAN (según dígitos del doc).
+  Re-ejecución: las filas con estado=ok se saltan (proceso resumible).
+  Los batches viven en memoria (_batches) con _job_lock; se limpian tras 1h.
+
+------------------------------------------------------------------------
+NOTIFICACIONES PUSH (PWA)
+------------------------------------------------------------------------
+  - /api/push/clave (VAPID pública), /api/push/registrar, /api/push/eliminar.
+  - La clave VAPID se autogenera y persiste en la tabla config si no se
+    define por variables (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY).
+
+------------------------------------------------------------------------
+DESPLIEGUE / CI / BACKUP
+------------------------------------------------------------------------
+  - CI: .github/workflows/deploy.yml dispara un deploy en Render en cada
+    push a main (usando el secreto RENDER_API_KEY del repo).
+  - Manual por API: ./deploy_render.sh (crea/actualiza el Web Service).
+  - Guía: DEPLOY_RENDER.md; API: API.md; usuarios: GUIA_USUARIO.md.
+  - Backup local: scripts/actualizar_backup.sh regenera bundle + tar.gz +
+    CREDENCIALES.txt (600) + RESTAURAR.txt en ~/Documents/backups-dian/.
+
+------------------------------------------------------------------------
+VARIABLES DE ENTORNO PRINCIPALES
+------------------------------------------------------------------------
+  APP_ADMIN_USER / APP_ADMIN_PASS / APP_SECRET_KEY (obligatorias)
+  APP_ENV / APP_SESSION_HOURS / APP_DATA_DIR / APP_JOBS_DIR
+  TURSO_DB_URL / TURSO_AUTH_TOKEN        (persistencia en la nube)
+  VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY   (push; opcional)
+
+------------------------------------------------------------------------
+PRUEBAS
+------------------------------------------------------------------------
+  pip install -r requirements-dev.txt
+  pytest        # 52 passing (auth, batch, api, push, db, análisis)
+=====================================================================
