@@ -210,6 +210,28 @@ async def pag_privacidad():
     return HTMLResponse(html)
 
 
+@app.get("/api/masiva/plantilla")
+async def api_masiva_plantilla(sesion: str | None = Cookie(default=None)):
+    """Descarga una plantilla .xlsx con las columnas esperadas por la masiva.
+
+    columnas: tipo_documento, numero_documento, contrasena, fecha_vencimiento,
+    estado. Las dos últimas las alimenta el sistema al terminar cada cliente.
+    """
+    _puede_contador(sesion)
+    buf = io.BytesIO()
+    batch_mod.generar_plantilla(buf)
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": 'attachment; filename="plantilla_clientes.xlsx"',
+        },
+    )
+
+
 class _AssetsSinCache(StaticFiles):
     """Estáticos con revalidación forzada: evita que navegador/edge sigan usando
     JS/CSS viejos tras un despliegue (los tabs y listados dependen de cargar la

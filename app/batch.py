@@ -79,15 +79,59 @@ def cargar_filas(ruta: Path) -> tuple[list[dict], list[str]]:
 
 def guardar_estado(ruta: Path, fila_excel: int, estado: str) -> None:
     """Escribe el resultado en la columna 'estado' de la fila dada."""
+    _celda_columna(ruta, COLUMNA_ESTADO, fila_excel, estado)
+
+
+# Columnas que alimenta el sistema al terminar el proceso de cada cliente
+COLUMNA_ESTADO = "estado"
+COLUMNA_FECHA_VENCIMIENTO = "fecha_vencimiento"
+
+PLANTILLA_ENCABEZADOS = (
+    "tipo_documento",
+    "numero_documento",
+    "contrasena",
+    COLUMNA_FECHA_VENCIMIENTO,
+    COLUMNA_ESTADO,
+)
+
+
+def generar_plantilla(ruta: Path) -> None:
+    """Crea una plantilla .xlsx con las columnas esperadas, sin fila de ejemplo.
+
+    La primera hoja es la activa (cargar_filas/guardar_* usan ws.active).
+    'fecha_vencimiento' y 'estado' las alimenta el sistema al terminar cada
+    cliente; no deben incluirse datos ficticios que se procesarían como reales.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "clientes"
+    for col, nombre in enumerate(PLANTILLA_ENCABEZADOS, start=1):
+        ws.cell(row=1, column=col, value=nombre)
+    wb.save(ruta)
+
+
+def _celda_columna(ruta: Path, nombre: str, fila_excel: int, valor) -> None:
+    """Escribe 'valor' en la columna de encabezado 'nombre' de la fila dada.
+
+    Crea la columna al final si aún no existe (mismo criterio que guardar_estado)
+    para que el proceso pueda alimentar el resultado aunque el .xlsx del
+    contador tuviera otras columnas.
+    """
     wb = load_workbook(ruta)
     ws = wb.active
     encabezados = [_normalizar(c) for c in next(ws.iter_rows(values_only=True))]
-    if "estado" not in encabezados:
-        ws.cell(row=1, column=len(encabezados) + 1, value="estado")
-        encabezados.append("estado")
-    col = encabezados.index("estado") + 1
-    ws.cell(row=fila_excel, column=col, value=estado)
+    nombre = _normalizar(nombre)
+    if nombre not in encabezados:
+        ws.cell(row=1, column=len(encabezados) + 1, value=nombre)
+        encabezados.append(nombre)
+    col = encabezados.index(nombre) + 1
+    ws.cell(row=fila_excel, column=col, value=valor)
     wb.save(ruta)
+
+
+def guardar_fecha_vencimiento(ruta: Path, fila_excel: int, fecha: str) -> None:
+    """Escribe la fecha de vencimiento calculada en la fila dada."""
+    _celda_columna(ruta, COLUMNA_FECHA_VENCIMIENTO, fila_excel, fecha)
 
 
 def _estado_final(exc: Exception) -> str:
@@ -136,6 +180,11 @@ async def ejecutar_batch(
             resumen["generados"].append(str(final))
             final_name = Path(final).name
             guardar_estado(entrada, creds["fila_excel"], OK)
+            # Alimenta la fecha de vencimiento que calculó el runner (calendario DIAN)
+            if runner.ultima_fecha_vencimiento:
+                guardar_fecha_vencimiento(
+                    entrada, creds["fila_excel"], runner.ultima_fecha_vencimiento
+                )
             fila_resultado["final"] = final_name
         except Exception as exc:  # noqa: BLE001
             estado = _estado_final(exc)

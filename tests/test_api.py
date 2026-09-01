@@ -192,6 +192,37 @@ def test_admin_activa_y_desactiva_acceso_contador(client, db, admin):
                   ).status_code == 403
 
 
+def test_plantilla_masiva_requiere_acceso_contador(client, db, admin):
+    cookie = _login(client, admin, "admin123").cookies.get("sesion")
+    client.post("/api/registro", json={"usuario": "contab2", "password": "clave123"})
+    client.post("/api/admin/decidir", json={"usuario": "contab2", "aprobar": True},
+                cookies={"sesion": cookie})
+    c = TestClient(app, follow_redirects=False)
+    c_cookie = _login(c, "contab2", "clave123").cookies.get("sesion")
+
+    # Sin acceso: 403
+    r = c.get("/api/masiva/plantilla")
+    assert r.status_code == 403
+
+    # Con acceso: 200 y descarga plantilla .xlsx con las columnas esperadas
+    r = client.post("/api/admin/contador", json={"usuario": "contab2", "activar": True},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 200
+    r = c.get("/api/masiva/plantilla")
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert ".xlsx" in r.headers["content-disposition"]
+
+    import io
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(r.content))
+    ws = wb.active
+    cab = [_ or "" for _ in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+    assert cab == ["tipo_documento", "numero_documento", "contrasena",
+                   "fecha_vencimiento", "estado"]
+    assert ws.max_row == 1  # sin fila de ejemplo
+
+
 def test_headers_de_seguridad(client, db):
     r = client.get("/")
     assert r.headers.get("x-frame-options") == "DENY"

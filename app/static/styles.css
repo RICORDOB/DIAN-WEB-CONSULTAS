@@ -42,6 +42,32 @@ body {
 h1 { margin: 0 0 4px; font-size: 22px; color: #0d47a1; }
 .subtitulo { color: #607d8b; font-size: 14px; margin: 0 0 20px; }
 
+.nota-masiva {
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #0d47a1;
+}
+.nota-masiva ul { margin: 8px 0; padding-left: 18px; }
+.nota-masiva li { margin: 4px 0; line-height: 1.5; }
+.nota-masiva code {
+  background: #ffffff;
+  border: 1px solid #bbdefb;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  color: #b71c1c;
+}
+.nota-masiva .boton-secundario {
+  margin-top: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  background: #0d47a1;
+}
+
 .pie {
   width: 100%;
   max-width: 860px;

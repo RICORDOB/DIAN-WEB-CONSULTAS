@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>DIAN Web — Contadores</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260829r6" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20260829r7" />
 </head>
 <body>
   <header class="barra">
@@ -26,9 +26,20 @@
 
   <div class="card panel-ancho">
     <h1>Consulta masiva (Contadores)</h1>
-    <p class="subtitulo">Sube un archivo .xlsx con una fila por cliente (columnas: tipo_documento, numero_documento, contrasena) y el sistema procesa todos secuencialmente.</p>
+    <p class="subtitulo">Sube un archivo .xlsx con una fila por cliente y el sistema procesa todos secuencialmente.</p>
 
     <div id="mensaje" class="mensaje oculto"></div>
+
+    <div class="nota-masiva">
+      <strong>Guía rápida</strong>
+      <ul>
+        <li>Formato <strong>.xlsx</strong> (primera hoja, primera fila = encabezados).</li>
+        <li>Columnas requeridas: <code>tipo_documento</code>, <code>numero_documento</code> y <code>contrasena</code>.</li>
+        <li><code>fecha_vencimiento</code> y <code>estado</code>: las alimenta el sistema al terminar cada cliente.</li>
+        <li>Re-ejecución: las filas con <code>estado = ok</code> ya procesadas se saltan.</li>
+      </ul>
+      <a href="/api/masiva/plantilla" class="boton boton-secundario">DESCARGAR PLANTILLA</a>
+    </div>
 
     <form id="masivaForm" class="formulario">
       <label for="archivoXlsx">Archivo .xlsx de clientes</label>
@@ -72,6 +83,6 @@
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-  <script src="/assets/app.js?v=20260829r6"></script>
+  <script src="/assets/app.js?v=20260829r7"></script>
 </body>
 </html>

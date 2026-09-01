@@ -81,6 +81,9 @@ class DianRunner:
         # Análisis de renta de la última consulta, para que el orquestador
         # (main.py) pueda exponerlo al frontend vía /api/job/{id}.
         self.ultimo_analisis: dict | None = None
+        # Fecha de vencimiento calculada en la última consulta individual
+        # (la usa batch.py para alimentar la columna fecha_vencimiento del .xlsx).
+        self.ultima_fecha_vencimiento: str | None = None
 
     # -------------------------------------------------------------------
     # Logging / progreso
@@ -465,6 +468,7 @@ class DianRunner:
             "contrasena": contrasena,
             "fecha_vencimiento": self._fecha_vencimiento_renta(numero_documento).isoformat(),
         }
+        self.ultima_fecha_vencimiento = creds["fecha_vencimiento"]
         self.loguear(
             f"[info] Consulta individual: {tipo_documento} {numero_documento}"
         )

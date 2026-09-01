@@ -13,7 +13,10 @@ function mostrarMensaje(el, texto, tipo) {
 }
 
 function peticion(url, opciones = {}) {
-  const headers = opciones.body ? { "Content-Type": "application/json" } : {};
+  // Si el body es FormData dejamos que el navegador ponga el Content-Type
+  // multipart con su boundary; forzarlo a JSON rompería la subida de archivos.
+  const esForm = opciones.body instanceof FormData;
+  const headers = opciones.body && !esForm ? { "Content-Type": "application/json" } : {};
   return fetch(url, { ...opciones, headers, credentials: "same-origin" });
 }
 
