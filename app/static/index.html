@@ -3,19 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#0d47a1" />
+  <meta name="theme-color" content="#0c1f3f" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
-  <title>ExoRenta — Acceso</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260829r8" />
+  <title>ExoRenta — Contador a tu Servicio</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=20260904" />
 </head>
 <body>
   <div class="card" id="loginView">
-    <h1>ExoRenta</h1>
-    <p class="subtitulo">Accede a tu cuenta para realizar consultas de información exógena.</p>
+    <p class="enlace volver"><a href="https://contador-a-tu-servicio.vercel.app" target="_blank" rel="noopener">← Volver a la página</a></p>
+    <h1><span class="logo-cs">CS</span> ExoRenta</h1>
+    <p class="subtitulo">Consulta de información exógena DIAN · Contador a tu Servicio</p>
 
     <div id="mensaje" class="mensaje oculto"></div>
 
@@ -36,7 +37,8 @@
   </div>
 
   <div class="card oculto" id="registroView">
-    <h1>Solicitar alta</h1>
+    <p class="enlace volver"><a href="#" id="btnVolverLogin">← Volver al inicio</a></p>
+    <h1><span class="logo-cs">CS</span> Solicitar alta</h1>
     <p class="subtitulo">Crea tu usuario. Un administrador deberá aprobar tu solicitud antes de que puedas ingresar.</p>
 
     <div id="mensajeRegistro" class="mensaje oculto"></div>
@@ -50,16 +52,12 @@
 
       <button type="submit" class="boton">Solicitar alta</button>
     </form>
-
-    <p class="enlace">
-      <a href="#" id="btnVolverLogin">← Volver al inicio</a>
-    </p>
   </div>
 
   <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.<br />
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-  <script src="/assets/app.js?v=20260829r8"></script>
+  <script src="/assets/app.js?v=20260904"></script>
 </body>
 </html>

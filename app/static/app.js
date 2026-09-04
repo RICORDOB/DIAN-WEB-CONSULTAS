@@ -759,7 +759,7 @@ function iniciarDev() {
           labels: ["Exitosas", "Errores", "En curso"],
           datasets: [{
             data: [c.done, c.error, c.running + c.queued],
-            backgroundColor: ["#2e7d32", "#c62828", "#0d47a1"],
+            backgroundColor: ["#2e7d32", "#c62828", "#0c1f3f"],
           }],
         },
         options: { responsive: true, maintainAspectRatio: false },

@@ -1,9 +1,9 @@
 /* Service worker ExoRenta: caché controlada de estáticos + push notifications. */
-const CACHE = "exorenta-v1";
+const CACHE = "exorenta-v2";
 const ASSETS = [
   "/",
-  "/assets/styles.css?v=20260829r8",
-  "/assets/app.js?v=20260829r8",
+  "/assets/styles.css?v=20260904",
+  "/assets/app.js?v=20260904",
 ];
 
 self.addEventListener("install", (e) => {

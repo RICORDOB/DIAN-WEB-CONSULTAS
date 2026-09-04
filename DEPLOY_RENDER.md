@@ -139,3 +139,23 @@ Cada corrida crea en `~/Documents/backups-dian/ACTUAL/`:
 - **Starter**: US$0/mes, duerme tras 15 min de inactividad (cold start ~30-60 s).
 - **Standard**: US$25/mes (o Starter pagado US$7), siempre encendido.
 - Sube de plan solo si Chromium necesita más RAM o no quieres demoras de arranque.
+
+---
+
+## 8. Integración con la landing y subdominio (futuro)
+
+ExoRenta se integra con la landing **Contador a tu Servicio** (pestaña "ExoRenta"
+en el sitio y enlace en el footer, apuntando a esta URL). La landing usa la env
+`NEXT_PUBLIC_EXORENTA_URL` (default `https://dian-web.onrender.com`).
+
+Actualmente no hay dominio propio, por lo que se usa la URL de Render. Cuando se
+compre `contadoratuservicio.com`, plan previsto:
+
+1. **Render**: crear el **custom domain** `exorenta.contadoratuservicio.com`
+   (Settings → Custom Domains) y seguir las instrucciones de DNS.
+2. **DNS**: registrar el CNAME que indique Render (o registro A/ALIAS).
+3. **Landing**: actualizar la env `NEXT_PUBLIC_EXORENTA_URL` a
+   `https://exorenta.contadoratuservicio.com` y redeployar Vercel.
+
+El resto de la integración no cambia: ExoRenta conserva su propio login
+(admin/contador/usuario) y la landing solo lo enlaza/presenta.
