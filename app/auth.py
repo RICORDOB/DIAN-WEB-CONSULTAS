@@ -175,6 +175,23 @@ def iniciar_db() -> None:
             )
             """
         )
+        # Clientes autorizados para el chat bot: credenciales DIAN cifradas.
+        # numero_documento es la PK; contrasena_cifrada guarda la contraseña con
+        # Fernet (app/bot/cifrado.py). contrasena_propia=1 -> credencial cargada
+        # por el admin desde clientes_dian.xlsx; contrasena_propia=0 -> la aportó
+        # el propio cliente durante el chat (futuro flujo manual).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clientes_autorizados (
+                numero_documento TEXT PRIMARY KEY,
+                tipo_documento TEXT NOT NULL DEFAULT 'Cédula de Ciudadanía',
+                contrasena_cifrada TEXT NOT NULL,
+                fecha_vencimiento TEXT,
+                contrasena_propia INTEGER NOT NULL DEFAULT 1,
+                creado_en TEXT NOT NULL
+            )
+            """
+        )
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
@@ -528,3 +545,80 @@ def estadisticas_completas() -> dict:
         "por_dia": por_dia,
         "por_usuario": [{"usuario": u, "total": t} for u, t in por_usuario.items()],
     }
+
+
+# ---------------------------------------------------------------------------
+# Clientes autorizados (chat bot)
+# ---------------------------------------------------------------------------
+def guardar_cliente(numero_documento: str, tipo_documento: str,
+                    contrasena_cifrada: str, fecha_vencimiento: str | None,
+                    contrasena_propia: bool = True) -> dict:
+    """Upsert de un cliente autorizado. Devuelve si era nuevo o se actualizó."""
+    numero = str(numero_documento).strip()
+    with _conectar() as conn:
+        previo = conn.execute(
+            "SELECT 1 FROM clientes_autorizados WHERE numero_documento = ?", (numero,)
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO clientes_autorizados
+                (numero_documento, tipo_documento, contrasena_cifrada,
+                 fecha_vencimiento, contrasena_propia, creado_en)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(numero_documento) DO UPDATE SET
+                tipo_documento = excluded.tipo_documento,
+                contrasena_cifrada = excluded.contrasena_cifrada,
+                fecha_vencimiento = excluded.fecha_vencimiento,
+                contrasena_propia = excluded.contrasena_propia
+            """,
+            (numero, tipo_documento, contrasena_cifrada, fecha_vencimiento,
+             1 if contrasena_propia else 0,
+             time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"numero_documento": numero, "nuevo": previo is None}
+
+
+def buscar_cliente(numero_documento: str) -> dict | None:
+    """Devuelve el cliente (con credencial cifrada) o None si no existe."""
+    numero = str(numero_documento).strip()
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT * FROM clientes_autorizados WHERE numero_documento = ?", (numero,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def listar_clientes(limite: int = 1000) -> list[dict]:
+    """Lista clientes autorizados. NUNCA devuelve la credencial cifrada."""
+    with _conectar() as conn:
+        rows = conn.execute(
+            "SELECT numero_documento, tipo_documento, fecha_vencimiento, "
+            "       contrasena_propia, creado_en "
+            "FROM clientes_autorizados ORDER BY creado_en DESC LIMIT ?",
+            (limite,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def contar_clientes() -> int:
+    with _conectar() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM clientes_autorizados").fetchone()
+    return int(row[0]) if row else 0
+
+
+def eliminar_cliente(numero_documento: str, admin: str) -> dict:
+    """Elimina un cliente autorizado. Solo admin."""
+    numero = str(numero_documento).strip()
+    with _conectar() as conn:
+        cur = conn.execute(
+            "DELETE FROM clientes_autorizados WHERE numero_documento = ?", (numero,)
+        )
+        if cur.rowcount == 0:
+            raise AuthError(f"No se encontró el cliente '{numero}'.")
+        conn.execute(
+            "INSERT INTO registros (accion, quien, usuario, cuando) "
+            "VALUES (?, ?, ?, ?)",
+            ("eliminar_cliente", admin, numero,
+             time.strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"numero_documento": numero, "eliminado": True}

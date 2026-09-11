@@ -3,8 +3,9 @@ RESUMEN DE PROYECTO — DIAN Web (Consulta por navegador)
 =====================================================================
 Última actualización: 2026-09-11
 Estado: PROYECTO WEB activo. Consultas individuales (ExoRenta + copia del
-RUT en PDF) y MASIVAS (panel Contadores con acceso de pago),
-notificaciones push, política de privacidad y despliegue continuo en Render.
+RUT en PDF) y MASIVAS (panel Contadores con acceso de pago), CHAT BOT de
+atención web para clientes, notificaciones push, política de privacidad y
+despliegue continuo en Render.
 
 (El anterior RESUMEN_PROYECTO.txt pasó a RESUMEN_SCRIPT_ORIGINAL.txt,
 que documenta el script local dian_login.py + Google Drive. Este
@@ -21,7 +22,7 @@ un navegador (https), sin instalar nada en el equipo del usuario.
   Repo      : https://github.com/RICORDOB/DIAN-WEB-CONSULTAS (main)
   URL prod  : https://dian-web.onrender.com
   Servicio  : srv-d9v6jam7bikc73bt9rn0 (Render, Docker)
-  Tests     : pytest (55)
+  Tests     : pytest (75)
 
 ------------------------------------------------------------------------
 ARQUITECTURA (app/)
@@ -33,7 +34,8 @@ ARQUITECTURA (app/)
   db.py     -> persistencia con DOS backends: Turso (libSQL nube) y SQLite local (fallback)
   push.py   -> notificaciones push (VAPID + suscripciones)
   comun.py  -> constantes compartidas: UVT, topes, selectores, calendario de vencimientos
-  static/   -> index, panel, dev, contadores, privacidad, styles.css, app.js, sw.js, manifest
+  bot/      -> chat de atención: cifrado (Fernet), motor de estados, tokens de descarga
+  static/   -> index, panel, dev, contadores, privacidad, styles.css, app.js, bot.js, sw.js
 
 Frontend: HTML/CSS/JS vanilla + PWA (service worker sw.js con caché versionada,
 cache-buster ?v= en los assets, manifest.webmanifest). Sin framework.
@@ -44,14 +46,18 @@ BASES DE DATOS (persistencia)
   - Turso/libSQL (HTTP v2) si existen TURSO_DB_URL + TURSO_AUTH_TOKEN.
   - SQLite local como fallback (desarrollo/pruebas).
   - Tablas (auth.iniciar_db): usuarios, consultas, registros,
-    push_suscripciones, config (VAPID).
+    push_suscripciones, config (VAPID), clientes_autorizados (chat bot:
+    credenciales de clientes CIFRADAS con Fernet).
   - Columnas del usuario: rol (usuario|admin|contador), estado
     (pendiente|aprobado|bloqueado), acceso_contador (int, migrada
     automáticamente si no existe).
 
 Seguridad de datos de clientes:
   - Número de documento y contraseña DIAN SOLO en memoria durante la
-    consulta. NUNCA se persisten ni en BD ni en reportes.
+    consulta manual. NUNCA se persisten en esas consultas.
+  - El catálogo del CHAT BOT (clientes_dian.xlsx) se sube por el admin y
+    cada contraseña se CIFRA con Fernet (clave derivada de APP_SECRET_KEY)
+    antes de persistir; se descifra solo en memoria al lanzar el job.
   - Las contraseñas de las cuentas se guardan con hash PBKDF2 + salt.
   - El historial guarda usuario, tipo, fechas y estado (sin documento).
 
@@ -103,10 +109,38 @@ CONSULTA MASIVA (/contadores)
   Al terminar, el sistema ALIMENTA:
     - estado        : resultado del cliente.
     - fecha_vencimiento: fecha del calendario DIAN (según dígitos del doc).
-  Re-ejecución: las filas con estado=ok se saltan (proceso resumible).
+Re-ejecución: las filas con estado=ok se saltan (proceso resumible).
   Los batches viven en memoria (_batches) con _job_lock; se limpian tras 1h.
 
-------------------------------------------------------------------------
+-----------------------------------------------------------------------
+CHAT BOT (atención web en la landing)
+-----------------------------------------------------------------------
+  Widget flotante en / (app/static/bot.js). NO es Telegram ni Meta:
+  es un asistente embebido en la propia página. Público y anónimo
+  (cookie firmada 'bot', 12 h); el cliente escribe SOLO su cédula.
+
+  Flujo:
+    1) POST /api/bot/mensaje {mensaje} -> si la cédula existe, devuelve
+       acciones 'rut' (copia del RUT PDF) y 'consulta' (Excel ExoRenta).
+       Si no existe: 'manual' (ir al panel) / 'reintentar' / 'registro'.
+    2) POST /api/bot/accion {accion} -> lanza el job (misma cola _job_lock,
+       usuario 'bot:<chat_id>') y devuelve job_id.
+    3) GET /api/bot/job/{id} (polling) -> en 'done' devuelve enlace
+       /api/bot/descargar/<token>.
+    4) GET /api/bot/descargar/<token> -> file 1-uso con vencimiento de
+       15 min (segunda descarga = 403).
+
+  Catálogo (admin):
+    - POST /api/admin/clientes (multipart .xlsx, admin, RL 5) importa TODAS
+      las filas de clientes_dian.xlsx (incl. estado=ok), las CIFRA con
+      Fernet y las guarda en clientes_autorizados.
+    - GET  /api/admin/clientes          (lista sin credenciales)
+    - DELETE /api/admin/clientes/{cc}   (quita un cliente)
+  Conversaciones sin actividad 15 min -> descartadas.
+  Enlaces de descarga: tokens de 1-uso y 15 min; credencial nunca viaja
+  en la respuesta.
+
+-----------------------------------------------------------------------
 NOTIFICACIONES PUSH (PWA)
 ------------------------------------------------------------------------
   - /api/push/clave (VAPID pública), /api/push/registrar, /api/push/eliminar.
@@ -135,5 +169,5 @@ VARIABLES DE ENTORNO PRINCIPALES
 PRUEBAS
 ------------------------------------------------------------------------
   pip install -r requirements-dev.txt
-  pytest        # 52 passing (auth, batch, api, push, db, análisis)
+  pytest        # 75 passing (auth, batch, api, push, db, bot, cifrado, análisis)
 =====================================================================

@@ -77,6 +77,47 @@ def cargar_filas(ruta: Path) -> tuple[list[dict], list[str]]:
     return filas, encabezados
 
 
+def cargar_clientes(ruta: Path) -> list[dict]:
+    """Lee TODOS los clientes del Excel (incluidos los con estado 'ok').
+
+    Usado por el chat bot: el archivo clientes_dian.xlsx es el catálogo de
+    clientes autorizados, no una lista de pendientes por procesar. Exige las
+    mismas 3 columnas requeridas; si no hay columna 'fecha_vencimiento' se
+    deja en None. No devuelve la fila física (idem a cargar_filas).
+    """
+    wb = load_workbook(ruta)
+    ws = wb.active
+    filas_raw = list(ws.iter_rows(values_only=True))
+    if not filas_raw:
+        return []
+
+    encabezados = [_normalizar(c) for c in filas_raw[0]]
+    idx = {nombre: i for i, nombre in enumerate(encabezados)}
+    faltantes = [c for c in COLUMNAS_REQUERIDAS if c not in idx]
+    if faltantes:
+        raise ValueError(
+            "El archivo debe tener las columnas: "
+            + ", ".join(COLUMNAS_REQUERIDAS)
+            + f". Faltan: {', '.join(faltantes)}."
+        )
+
+    clientes: list[dict] = []
+    for row in filas_raw[1:]:
+        tipo = row[idx["tipo_documento"]]
+        numero = row[idx["numero_documento"]]
+        password = row[idx["contrasena"]]
+        if numero is None or str(numero).strip() == "" or password is None:
+            continue
+        fecha = row[idx.get("fecha_vencimiento")] if "fecha_vencimiento" in idx else None
+        clientes.append({
+            "tipo_documento": str(tipo or "Cédula de Ciudadanía").strip(),
+            "numero_documento": str(numero).strip(),
+            "contrasena": str(password),
+            "fecha_vencimiento": str(fecha).strip() if fecha is not None else None,
+        })
+    return clientes
+
+
 def guardar_estado(ruta: Path, fila_excel: int, estado: str) -> None:
     """Escribe el resultado en la columna 'estado' de la fila dada."""
     _celda_columna(ruta, COLUMNA_ESTADO, fila_excel, estado)

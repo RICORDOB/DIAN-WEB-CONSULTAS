@@ -101,17 +101,39 @@ Es útil para reenviar solo los que fallaron sin perder el trabajo hecho.
 
 ---
 
-## 5. Privacidad de la información
+## 5. Chat de atención (para tus clientes)
 
-- Los **documentos y contraseñas** de tus clientes se usan **solo para la consulta**
-  y **no se guardan** en la plataforma.
+La página principal tiene un **botón de chat flotante**. Está pensado para que tus
+**clientes** obtengan su propio archivo sin que tú tengas que hacer la consulta:
+
+1. El cliente escribe **solo su número de cédula**.
+2. Si está registrado en el catálogo de clientes, el bot le ofrece:
+   - **Copia del RUT (PDF)**, o
+   - **Consulta ExoRenta (Excel)**.
+3. El bot procesa y le entrega un **enlace de descarga** que solo sirve **una vez**
+   y vence a los **15 minutos**.
+4. Si la cédula **no está registrada**, el bot le sugiere hacer la consulta **manual**
+   con sus propias credenciales o **solicitar una cuenta**.
+
+> El **administrador** es quien carga el catálogo de clientes desde su panel, subiendo
+> el archivo `clientes_dian.xlsx`. Las contraseñas quedan **cifradas**; nadie puede
+> verlas desde la plataforma.
+
+---
+
+## 6. Privacidad de la información
+
+- Los **documentos y contraseñas** que se usan para una consulta manual se emplean
+  **solo durante la consulta** y **no se guardan**.
+- Para el **chat de atención**, el catálogo de clientes sí se guarda, pero las
+  contraseñas quedan **cifradas** y nunca se muestran en pantalla ni en las respuestas.
 - La plataforma guarda únicamente tu cuenta y el registro de que hiciste una consulta
   (sin el número de documento ni el contenido de los reportes).
 - Lee la política completa en `/privacidad` (enlace al pie de la página).
 
 ---
 
-## 6. Solución de problemas
+## 7. Solución de problemas
 
 - **"El archivo debe ser .xlsx"** → el archivo no tiene extensión `.xlsx`.
   Guarda el Excel como `Archivo > Guardar como > .xlsx`.

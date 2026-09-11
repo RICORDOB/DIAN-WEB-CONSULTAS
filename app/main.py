@@ -20,6 +20,13 @@ Rutas:
   POST /api/admin/eliminar      -> eliminar cuenta y su historial (requiere admin)
   GET  /api/admin/estadisticas  -> KPIs y datos para el dashboard (requiere admin)
   GET  /api/admin/consultas     -> historial de consultas (requiere admin)
+  POST /api/admin/clientes      -> subir clientes_dian.xlsx (cifrado en BD)
+  GET  /api/admin/clientes      -> listar clientes autorizados (sin credenciales)
+  DELETE /api/admin/clientes/{cedula} -> quitar un cliente
+  POST /api/bot/mensaje         -> texto del cliente hacia el asistente (público)
+  POST /api/bot/accion          -> clic en botón del asistente (público)
+  GET  /api/bot/job/{id}        -> progreso del job del chat (público, cookie chat)
+  GET  /api/bot/descargar/{token}-> descargar resultado (token 1-uso + 15 min)
   GET  /api/push/clave          -> llave pública VAPID (requiere sesión)
   POST /api/push/registrar      -> alta de suscripción push (requiere sesión)
   POST /api/push/eliminar       -> baja de suscripción push (requiere sesión)
@@ -47,6 +54,7 @@ from pydantic import BaseModel
 from . import auth
 from . import batch as batch_mod
 from . import push
+from .bot import cifrado, motor, tokens as bot_tokens
 from .runner import DianRunner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -82,6 +90,9 @@ RATE_POR_RUTA = {
     "/api/registro": 5,
     "/api/consulta": 10,
     "/api/rut": 10,
+    "/api/admin/clientes": 5,
+    "/api/bot/mensaje": 30,
+    "/api/bot/accion": 30,
 }
 
 
@@ -768,13 +779,249 @@ async def api_consultas(sesion: str | None = Cookie(default=None),
 
 
 # ---------------------------------------------------------------------------
+# Clientes autorizados (chat bot)
+# ---------------------------------------------------------------------------
+@app.post("/api/admin/clientes")
+async def api_admin_clientes_subir(archivo: UploadFile = File(...),
+                                   sesion: str | None = Cookie(default=None)):
+    """Sube el catálogo de clientes (clientes_dian.xlsx) y lo cifra en la BD.
+
+    Requiere admin. El archivo usa las mismas columnas que la plantilla masiva
+    (tipo_documento, numero_documento, contrasena, fecha_vencimiento, estado).
+    A diferencia de la masiva, aquí se importan TODAS las filas (clientes ya
+    procesados incluidos) porque el bot entrega resultados, no re-ejecuta.
+    """
+    _requiere_admin(sesion)
+    if not archivo or not archivo.filename:
+        raise HTTPException(status_code=400, detail="Selecciona un archivo .xlsx.")
+    if not archivo.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="El archivo debe ser .xlsx.")
+
+    contenido = await archivo.read()
+    if len(contenido) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="El archivo supera los 10 MB.")
+
+    tmp = JOBS_DIR / f".clientes_{uuid.uuid4().hex}.xlsx"
+    tmp.write_bytes(contenido)
+    try:
+        clientes = batch_mod.cargar_clientes(tmp)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+    if not clientes:
+        raise HTTPException(status_code=400, detail="El archivo no tiene filas válidas.")
+
+    cargados = 0
+    actualizados = 0
+    for c in clientes:
+        cifrado_texto = cifrado.cifrar(c["contrasena"])
+        res = auth.guardar_cliente(
+            c["numero_documento"], c["tipo_documento"],
+            cifrado_texto, c.get("fecha_vencimiento"),
+        )
+        if res["nuevo"]:
+            cargados += 1
+        else:
+            actualizados += 1
+    return {
+        "cargados": cargados,
+        "actualizados": actualizados,
+        "total": len(clientes),
+    }
+
+
+@app.get("/api/admin/clientes")
+async def api_admin_clientes(sesion: str | None = Cookie(default=None)):
+    """Lista los clientes autorizados (nunca expone credenciales)."""
+    _requiere_admin(sesion)
+    clientes = auth.listar_clientes()
+    return {
+        "total": len(clientes),
+        "clientes": clientes,
+    }
+
+
+@app.delete("/api/admin/clientes/{cedula}")
+async def api_admin_clientes_eliminar(cedula: str,
+                                      sesion: str | None = Cookie(default=None)):
+    """Quita un cliente autorizado del catálogo del bot."""
+    admin = _requiere_admin(sesion)[0]
+    try:
+        return auth.eliminar_cliente(cedula, admin)
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Chat bot (asistente web)
+# ---------------------------------------------------------------------------
+class BotMensajeIn(BaseModel):
+    mensaje: str
+
+
+class BotAccionIn(BaseModel):
+    accion: str
+
+
+def _chat_id_cookie(bot: str | None) -> tuple[str, str]:
+    """Devuelve (chat_id, cookie_a_emitir). Si no hay cookie válida, crea un
+    chat nuevo y devuelve la cookie firmada para guardarla en la respuesta."""
+    chat_id = bot_tokens.leer_cookie_chat(bot)
+    if chat_id and motor.estado(chat_id) is not None:
+        return chat_id, ""
+    chat_id = motor.nuevo_chat()
+    return chat_id, bot_tokens.crear_cookie_chat(chat_id)
+
+
+def _respuesta_bot(resp: dict, chat_id: str, bot: str | None) -> dict:
+    """Envoltorio de la respuesta del motor con el job_id activo del chat y el
+    flag de cookie nueva (para que el navegador la guarde)."""
+    estado_chat = motor.estado(chat_id) or {}
+    out = {
+        "mensajes": resp["mensajes"],
+        "acciones": resp["acciones"],
+        "destino": resp.get("destino"),
+    }
+    if resp.get("lanzar"):
+        out["lanzar"] = _lanzar_job_bot(chat_id, resp["lanzar"])
+    if estado_chat.get("job_id"):
+        out["job_id"] = estado_chat["job_id"]
+    return out
+
+
+def _lanzar_job_bot(chat_id: str, orden: dict) -> dict:
+    """Lanza el job DIAN de un chat anónimo usando las credenciales cifradas.
+
+    El job se ejecuta bajo la misma cola que los jobs web (_job_lock). El
+    'usuario' del job se marca como 'bot:<chat_id>' para aislarlo de cuentas.
+    """
+    job_id = uuid.uuid4().hex
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    tipo_job = "rut" if orden["tipo"] == motor.ACCION_RUT else "xls"
+    _jobs[job_id] = {
+        "estado": "queued",
+        "tipo": tipo_job,
+        "progreso": [],
+        "final": None,
+        "error": None,
+        "resultado": None,
+        "dir": job_dir,
+        "usuario": f"bot:{chat_id}",
+        "creado": time.time(),
+    }
+    motor.vincular_job(chat_id, job_id, orden.get("contrasena", ""))
+
+    async def _ejecutar():
+        async with _job_lock:
+            job = _jobs[job_id]
+            job["estado"] = "running"
+            def cb(msg: str, _done: bool):
+                job["progreso"].append(msg)
+            runner = DianRunner(job_dir=job_dir, progreso=cb)
+            try:
+                if tipo_job == "rut":
+                    final = await runner.descargar_certificado_rut(
+                        orden["tipo_documento"], orden["numero_documento"],
+                        orden["contrasena"],
+                    )
+                else:
+                    final = await runner.consulta_individual(
+                        orden["tipo_documento"], orden["numero_documento"],
+                        orden["contrasena"],
+                    )
+                job["estado"] = "done"
+                job["final"] = str(final)
+                job["resultado"] = runner.ultimo_analisis
+            except Exception as exc:  # noqa: BLE001
+                job["estado"] = "error"
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                job["progreso"].append(f"Error: {exc}")
+
+    asyncio.create_task(_ejecutar())
+    return {"job_id": job_id, "tipo": tipo_job}
+
+
+@app.post("/api/bot/mensaje")
+async def api_bot_mensaje(body: BotMensajeIn, bot: str | None = Cookie(default=None)):
+    """Recibe el texto del cliente hacia el asistente web (público)."""
+    chat_id, cookie = _chat_id_cookie(bot)
+    resp = motor.manejar_mensaje(chat_id, (body.mensaje or "").strip())
+    out = _respuesta_bot(resp, chat_id, bot)
+    if cookie:
+        out["cookie"] = cookie
+    return out
+
+
+@app.post("/api/bot/accion")
+async def api_bot_accion(body: BotAccionIn, bot: str | None = Cookie(default=None)):
+    """Recibe el clic en un botón del asistente web (público)."""
+    chat_id, cookie = _chat_id_cookie(bot)
+    resp = motor.manejar_accion(chat_id, body.accion)
+    out = _respuesta_bot(resp, chat_id, bot)
+    if cookie:
+        out["cookie"] = cookie
+    return out
+
+
+@app.get("/api/bot/job/{job_id}")
+async def api_bot_job(job_id: str, bot: str | None = Cookie(default=None)):
+    """Progreso de un job lanzado desde el chat (solo el chat dueño lo ve)."""
+    chat_id = bot_tokens.leer_cookie_chat(bot)
+    job = _jobs.get(job_id)
+    if not chat_id or not job or job["usuario"] != f"bot:{chat_id}":
+        raise HTTPException(status_code=404, detail="Job no encontrado.")
+    if job["estado"] == "done":
+        motor.finalizar(chat_id)
+        token = bot_tokens.emitir_token_descarga(chat_id, job_id)
+        return {
+            "estado": job["estado"],
+            "progreso": job["progreso"][-50:],
+            "descarga": f"/api/bot/descargar/{token}",
+        }
+    if job["estado"] == "error":
+        motor.finalizar(chat_id, error=job["error"])
+    return {
+        "estado": job["estado"],
+        "progreso": job["progreso"][-50:],
+        "error": job["error"],
+    }
+
+
+@app.get("/api/bot/descargar/{token}")
+async def api_bot_descargar(token: str, bot: str | None = Cookie(default=None)):
+    """Sirve el archivo generado por el chat mediante token de 1-uso de 15 min."""
+    chat_id = bot_tokens.leer_cookie_chat(bot)
+    par = bot_tokens.consumir_token_descarga(token)
+    if not chat_id or not par or par[0] != chat_id:
+        raise HTTPException(status_code=403, detail="Enlace vencido o ya utilizado.")
+    job_id = par[1]
+    job = _jobs.get(job_id)
+    if not job or job["usuario"] != f"bot:{chat_id}" or not job["final"] or not Path(job["final"]).exists():
+        raise HTTPException(status_code=409, detail="El resultado ya no está disponible.")
+    media_type = (
+        "application/pdf"
+        if job["final"].lower().endswith(".pdf")
+        else "application/vnd.ms-excel"
+    )
+    return FileResponse(
+        job["final"],
+        filename=Path(job["final"]).name,
+        media_type=media_type,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Inicialización
 # ---------------------------------------------------------------------------
 async def _limpieza_periodica() -> None:
-    """Barre los jobs viejos cada 30 minutos mientras la app esté viva."""
+    """Barre jobs viejos y conversaciones del bot cada 30 minutos."""
     while True:
         await asyncio.sleep(30 * 60)
         _limpiar_jobs_viejos()
+        motor.limpiar_inactivos()
 
 
 @app.on_event("startup")

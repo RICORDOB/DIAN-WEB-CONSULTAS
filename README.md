@@ -6,7 +6,8 @@ sin instalar nada en el equipo del usuario.
 
 > **Estado:** consultas **individuales** (ExoRenta + **copia del RUT en PDF**) y
 > **masivas** (panel Contadores con acceso de pago activable por el administrador),
-> notificaciones push, política de privacidad y despliegue continuo en Render.
+> **chat bot de atención web** para clientes, notificaciones push, política de
+> privacidad y despliegue continuo en Render.
 
 ## Flujo
 
@@ -21,6 +22,19 @@ sin instalar nada en el equipo del usuario.
 5. Al terminar, se habilita el botón **DESCARGAR**:
    - Para la consulta ExoRenta: el `.xls` de 3 hojas (Información Exógena / Renta / Facturación Electrónica).
    - Para el RUT: el **PDF** del certificado.
+
+### Chat bot de atención (landing pública)
+
+- Widget flotante en la landing `/`. El cliente escribe **solo su número de cédula**.
+- Si existe en el catálogo (`clientes_autorizados`), el bot ofrece la **copia del RUT**
+  o la **Consulta ExoRenta** usando la credencial guardada y entrega el archivo en el
+  chat (enlaces de descarga **1-uso y 15 min**).
+- Catálogo: el admin sube `clientes_dian.xlsx` desde `/dev`
+  (`POST /api/admin/clientes`); el sistema **cifra** cada contraseña con Fernet
+  (clave derivada de `APP_SECRET_KEY`) antes de persistir. Las credenciales nunca salen
+  de la BD en la respuesta.
+- Si la cédula no está registrada, el bot deriva al usuario al **flujo manual**
+  (ingresar al panel con credenciales propias) o a **solicitar una cuenta**.
 
 ### Consultas masivas (panel Contadores)
 
@@ -47,8 +61,9 @@ app/
   db.py          # persistencia con dos backends: Turso (libSQL) y SQLite local
   push.py        # notificaciones push (VAPID + suscripciones)
   comun.py       # constantes compartidas (script y web): UVT, topes, selectores, calendario
-  static/        # index, panel, dev, contadores, privacidad, styles, app.js, sw.js, manifest
-tests/           # pytest: auth, batch, api, push, db y análisis de renta
+  bot/           # chat de atención: cifrado (Fernet), motor de estados y tokens de descarga
+  static/        # index, panel, dev, contadores, privacidad, styles, app.js, bot.js, sw.js, manifest
+tests/           # pytest: auth, batch, api, push, db, bot, cifrado y análisis de renta
 requirements-dev.txt  # dependencias para desarrollo/pruebas (pytest)
 .env.example     # plantilla de variables de entorno
 Dockerfile
@@ -58,7 +73,7 @@ requirements.txt
 ## Roles y acceso
 
 - **admin** (`APP_ADMIN_USER`): aprueba/rechaza altas, bloquea/desbloquea, activa el
-  acceso Contador y administra el panel `/dev`.
+  acceso Contador, administra el panel `/dev` y sube el catálogo de clientes del bot.
 - **usuario común**: acceso solo tras aprobación; puede usar el panel `/panel`.
 - **contador**: usuario al que el admin le activó `acceso_contador`; entra a `/contadores`.
 
@@ -139,15 +154,20 @@ Render al hacer push a `main`. Guía manual detallada en `DEPLOY_RENDER.md`.
 
 ## Seguridad
 
-- Las credenciales de clientes existen **solo en memoria** durante la tarea y se
-  descartan al terminar (los directorios temporales se limpian tras 1h).
+- Las credenciales de clientes **nunca se guardan en texto plano**: el catálogo del chat
+  bot se cifra con **Fernet** (clave derivada de `APP_SECRET_KEY`) antes de persistir y se
+  descifra solo en memoria al lanzar el job (cambiar `APP_SECRET_KEY` las invalida).
+- Las credenciales usadas manualmente en `/panel` existen **solo en memoria** durante la
+  tarea y se descartan al terminar (los directorios temporales se limpian tras 1h).
 - Las contraseñas de usuarios se almacenan con hash (PBKDF2 + salt).
 - Las sesiones se firman con `APP_SECRET_KEY`; la app **no arranca** sin ella
   (fail-fast) salvo en desarrollo con `APP_ENV=dev`.
 - Bloquear a un usuario lo revoca al instante: cada petición valida su estado en BD.
 - Headers de seguridad (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) en
   todas las respuestas.
-- Rate limiting por IP en `/api/login`, `/api/registro` y `/api/consulta`.
+- Rate limiting por IP en `/api/login`, `/api/registro`, `/api/consulta`, `/api/rut`,
+  `/api/admin/clientes` y `/api/bot/*`.
+- Los enlaces de descarga del bot son **tokens de un solo uso** con vencimiento de 15 min.
 - HTTPS lo provee la plataforma.
 - **Nunca** se deben incluir `clientes_dian.xlsx`, `cliente_individual.xlsx` ni
   `credentials.json` en el repositorio (están en `.gitignore`).

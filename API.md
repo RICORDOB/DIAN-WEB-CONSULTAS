@@ -71,6 +71,47 @@ del archivo (`application/pdf` para `.pdf`, `application/vnd.ms-excel` para `.xl
 
 ---
 
+## Chat bot (asistente web)
+
+Chat flotante en la landing pública. El cliente escribe **solo su cédula**; el bot busca
+sus credenciales DIAN en la tabla `clientes_autorizados` (cifradas) y ofrece la **copia del
+RUT (PDF)** o la **Consulta ExoRenta (xls)**. No requiere sesión: el chat se identifica con
+una cookie firmada anónima (`bot`, 12 h). Los jobs lanzados se marcan como `bot:<chat_id>`.
+
+| Método | Ruta | Protección | Descripción |
+|---|---|---|---|
+| POST | `/api/bot/mensaje` | pública (RL 30) | `{"mensaje": str}` → estado del diálogo |
+| POST | `/api/bot/accion` | pública (RL 30) | `{"accion": "rut"\|"consulta"\|"manual"\|"reintentar"\|"registro"}` |
+| GET | `/api/bot/job/{job_id}` | cookie `bot` dueña | Progreso; en `done` devuelve `descarga` (token) |
+| GET | `/api/bot/descargar/{token}` | cookie `bot` dueña | Entrega el archivo; token de **1-uso y 15 min** |
+
+Flujo típico:
+1. `POST /api/bot/mensaje {"mensaje": "hola"}` → responde con `cookie` nueva (guardarla).
+2. `POST /api/bot/mensaje {"mensaje": "31200506", cookie}` → si el cliente existe, devuelve
+   `acciones` con `rut` y `consulta`; si no, acciones `manual`/`reintentar`/`registro`.
+3. `POST /api/bot/accion {"accion": "rut", cookie}` → lanza el job y responde `{"job_id"}`.
+4. Polling `GET /api/bot/job/{job_id}` (misma cookie) → al terminar:
+   `{"estado": "done", "descarga": "/api/bot/descargar/<token>"}`.
+5. `GET /api/bot/descargar/<token>` → **una sola vez**; una segunda descarga responde `403`.
+
+Conversaciones sin actividad durante **15 min** se descartan. Las credenciales solo se
+descifran en memoria en el instante de lanzar el job y nunca viajan en la respuesta.
+
+### Subida del catálogo (admin)
+
+| Método | Ruta | Protección | Descripción |
+|---|---|---|---|
+| POST | `/api/admin/clientes` | admin (RL 5) | Multipart `archivo` `.xlsx` (máx. 10 MB) → cifra e importa |
+| GET | `/api/admin/clientes` | admin | Lista sin credenciales |
+| DELETE | `/api/admin/clientes/{cedula}` | admin | Quita un cliente del catálogo |
+
+`POST /api/admin/clientes` importa **todas** las filas (incluidas las de `estado = ok`),
+usa las mismas 3 columnas obligatorias de la plantilla masiva y cifra cada `contrasena` con
+Fernet (clave derivada de `APP_SECRET_KEY`) antes de persistir. Respuesta:
+`{"cargados": int, "actualizados": int, "total": int}`.
+
+---
+
 ## Notificaciones push
 
 | Método | Ruta | Protección | Descripción |
@@ -153,5 +194,9 @@ Reglas del admin:
   - `registros` — bitácora de acciones administrativas.
   - `push_suscripciones` — suscripciones push por usuario.
   - `config` — pares clave/valor (p. ej. la clave VAPID generada).
-- Las credenciales de clientes de la DIAN **nunca se persisten**; solo el hash PBKDF2
-  de la contraseña de la cuenta del usuario y el registro de la consulta (sin documento).
+  - `clientes_autorizados` — catálogo del chat bot: `numero_documento` (PK),
+    `tipo_documento`, `contrasena_cifrada`, `fecha_vencimiento`,
+    `contrasena_propia`, `creado_en`.
+- Las credenciales de clientes de la DIAN **no se guardan en texto plano**: la contraseña
+  de la cuenta web se guarda solo como hash PBKDF2 y las credenciales del bot se cifran con
+  Fernet antes de persistir (nunca se exponen vía API; cambiar `APP_SECRET_KEY` las invalida).
