@@ -2,8 +2,8 @@
 const CACHE = "exorenta-v2";
 const ASSETS = [
   "/",
-  "/assets/styles.css?v=20260904",
-  "/assets/app.js?v=20260904",
+"/assets/styles.css?v=20260911r1",
+  "/assets/app.js?v=20260911r1",
 ];
 
 self.addEventListener("install", (e) => {

@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>ExoRenta — Consulta</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=20260904" />
+<link rel="stylesheet" href="/assets/styles.css?v=20260911r1" />
 </head>
 <body>
   <header class="barra">
@@ -27,7 +27,7 @@
 
   <div class="card panel-ancho">
     <h1>Consulta individual</h1>
-    <p class="subtitulo">Ingresa los datos del cliente y presiona CONSULTAR.</p>
+    <p class="subtitulo">Ingresa los datos del cliente y elige una consulta.</p>
 
     <p class="push-linea">
       <button class="boton boton-mini" id="btnPush" type="button">Activar notificaciones</button>
@@ -53,7 +53,12 @@
       <label for="contrasena">Contraseña</label>
       <input type="password" id="contrasena" required autocomplete="off" />
 
-      <button type="submit" class="boton" id="btnConsultar">CONSULTAR</button>
+      <div class="botones-accion">
+        <button type="button" class="boton" id="btnConsultar">Consulta ExoRenta</button>
+        <button type="button" class="boton secundario" id="btnRut">Obtener copia del RUT</button>
+        <button type="button" class="boton secundario" id="btnCertificado" disabled
+                title="Disponible próximamente">Certificado</button>
+      </div>
     </form>
 
     <div id="progresoBox" class="oculto">
@@ -78,6 +83,12 @@
           <div class="print-sub">Ricardo Cordoba y Ana Maria Rozo · Consultores tributarios</div>
           <div class="print-fecha" id="printFecha"></div>
           <hr />
+        </div>
+
+        <div class="resultado-rut oculto" id="resultadoRut">
+          <div class="resultado-titulo">&#10003; Copia del RUT obtenida</div>
+          <p class="resultado-cabecera">El certificado del RUT fue descargado del portal DIAN.
+            Presiona DESCARGAR para guardar el PDF.</p>
         </div>
 
         <div class="resultado-veredicto verdict-no" id="resultadoVeredicto">
@@ -114,6 +125,6 @@
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-  <script src="/assets/app.js?v=20260904"></script>
+<script src="/assets/app.js?v=20260911r1"></script>
 </body>
 </html>

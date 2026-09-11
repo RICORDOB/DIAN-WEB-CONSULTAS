@@ -1,10 +1,10 @@
 =====================================================================
 RESUMEN DE PROYECTO — DIAN Web (Consulta por navegador)
 =====================================================================
-Última actualización: 2026-08-31
-Estado: PROYECTO WEB activo. Consultas individuales y MASIVAS (panel
-Contadores con acceso de pago), notificaciones push, política de
-privacidad y despliegue continuo en Render.
+Última actualización: 2026-09-11
+Estado: PROYECTO WEB activo. Consultas individuales (ExoRenta + copia del
+RUT en PDF) y MASIVAS (panel Contadores con acceso de pago),
+notificaciones push, política de privacidad y despliegue continuo en Render.
 
 (El anterior RESUMEN_PROYECTO.txt pasó a RESUMEN_SCRIPT_ORIGINAL.txt,
 que documenta el script local dian_login.py + Google Drive. Este
@@ -21,7 +21,7 @@ un navegador (https), sin instalar nada en el equipo del usuario.
   Repo      : https://github.com/RICORDOB/DIAN-WEB-CONSULTAS (main)
   URL prod  : https://dian-web.onrender.com
   Servicio  : srv-d9v6jam7bikc73bt9rn0 (Render, Docker)
-  Tests     : pytest (52)
+  Tests     : pytest (55)
 
 ------------------------------------------------------------------------
 ARQUITECTURA (app/)
@@ -75,10 +75,16 @@ Flujo de alta:
 
 ------------------------------------------------------------------------
 CONSULTA INDIVIDUAL (/panel)
-------------------------------------------------------------------------
-  POST /api/consulta {tipo, numero_documento, contrasena} -> job_id
-  GET  /api/job/{id}           -> estado/progreso
-  GET  /api/job/{id}/descargar -> .xls de 3 hojas (Exógena / Renta / FE)
+--------------------------------------------------------------------
+  Bajo las credenciales hay 3 acciones:
+    - Consulta ExoRenta: POST /api/consulta {tipo, numero, contraseña} -> job.
+    - Obtener copia del RUT: POST /api/rut {tipo, numero, contraseña} -> PDF.
+    - Certificado de ingresos/renta: visible pero "próximamente" (sin backend).
+  GET  /api/job/{id}             -> estado/progreso (tipo: xls|rut)
+  GET  /api/job/{id}/descargar   -> .xls de 3 hojas (Exógena/Renta/FE) o PDF del RUT
+     según la extensión del archivo generado.
+  El RUT se descarga desde el dashboard autenticado (enlace "Obtener copia RUT"),
+  reutilizando la sesión DIAN iniciada; el PDF queda en memoria para su descarga.
 
 ------------------------------------------------------------------------
 CONSULTA MASIVA (/contadores)

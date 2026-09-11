@@ -233,15 +233,19 @@ function iniciarPanel() {
   const linkDescargar = document.getElementById("linkDescargar");
   const btnImprimir = document.getElementById("btnImprimir");
   const btnConsultar = document.getElementById("btnConsultar");
+  const btnRut = document.getElementById("btnRut");
+  const btnCertificado = document.getElementById("btnCertificado");
 
   let jobId = null;
   let pollTimer = null;
+  // Tipo de trabajo en curso: "consulta" (libro .xls) o "rut" (certificado PDF)
+  let tipoActual = "consulta";
   // Estado de la barra de progreso (0-100% con animación suave).
   let pctActual = 0;
   let pctObjetivo = 0;
   let animTimer = null;
 
-  // Etapas conocidas del proceso: cada hito eleva el mínimo de la barra.
+  // Etapas conocidas de la consulta ExoRenta: cada hito eleva el mínimo de la barra.
   const HITOS = [
     ["login en muisca", 15],
     ["sesión iniciada correctamente", 35],
@@ -252,10 +256,19 @@ function iniciarPanel() {
     ["archivo cliente generado", 90],
   ];
 
+  // Hitos de la copia del RUT (menos etapas que la consulta completa).
+  const HITOS_RUT = [
+    ["login en muisca", 20],
+    ["sesión iniciada", 50],
+    ["copia del rut descargada", 80],
+    ["copia del rut obtenida", 95],
+  ];
+
   function pctPorHitos(lineas) {
     const texto = (lineas.join("\n") || "").toLowerCase();
+    const hitos = tipoActual === "rut" ? HITOS_RUT : HITOS;
     let obj = 8;
-    HITOS.forEach((par) => {
+    hitos.forEach((par) => {
       if (texto.includes(par[0])) obj = Math.max(obj, par[1]);
     });
     return Math.min(99, obj);
@@ -289,25 +302,47 @@ function iniciarPanel() {
     return "$" + Math.round(n).toLocaleString("es-CO");
   }
 
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
+  function camposValidos() {
+    const numeroDocumento = document.getElementById("numeroDocumento").value.trim();
+    const contrasena = document.getElementById("contrasena").value;
+    if (!numeroDocumento) {
+      mostrarMensaje(mensaje, "Escribe el número de documento.", "error");
+      return false;
+    }
+    if (!contrasena) {
+      mostrarMensaje(mensaje, "Escribe la contraseña.", "error");
+      return false;
+    }
+    return true;
+  }
+
+  function deshabilitarBotones(deshabilitar) {
+    [btnConsultar, btnRut, btnCertificado].forEach(function (b) {
+      if (b) b.disabled = deshabilitar;
+    });
+  }
+
+  function lanzar(tipo, endpoint) {
     if (jobId) { mostrarMensaje(mensaje, "Ya hay una consulta en curso.", "info"); return; }
+    if (!camposValidos()) return;
 
     const tipoDocumento = document.getElementById("tipoDocumento").value;
     const numeroDocumento = document.getElementById("numeroDocumento").value.trim();
     const contrasena = document.getElementById("contrasena").value;
 
+    tipoActual = tipo;
     progresoBox.classList.remove("oculto");
     descargaBox.classList.add("oculto");
     logProgreso.textContent = "";
     estadoJob.textContent = "Iniciando...";
-    btnConsultar.disabled = true;
+    deshabilitarBotones(true);
     pctActual = 0;
     pctObjetivo = 8;
     barraFill.className = "barra-fill";
     pintarPct();
+    mensaje.classList.add("oculto");
 
-    peticion("/api/consulta", {
+    peticion(endpoint, {
       method: "POST",
       body: JSON.stringify({
         tipo_documento: tipoDocumento,
@@ -316,7 +351,7 @@ function iniciarPanel() {
       }),
     }).then((resp) => {
       if (!resp.ok) {
-        btnConsultar.disabled = false;
+        deshabilitarBotones(false);
         pararAnimacion();
         return manejarError(resp, mensaje);
       }
@@ -325,12 +360,26 @@ function iniciarPanel() {
         pollTimer = setInterval(consultarProgreso, 1500);
       });
     });
+  }
+
+  btnConsultar.addEventListener("click", () => lanzar("consulta", "/api/consulta"));
+  btnRut.addEventListener("click", () => lanzar("rut", "/api/rut"));
+  btnCertificado.addEventListener("click", () => {
+    mostrarMensaje(mensaje, "El certificado de ingresos/renta estará disponible próximamente.", "info");
+  });
+
+  // Al presionar Enter en el formulario se lanza la consulta ExoRenta
+  form.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      btnConsultar.click();
+    }
   });
 
   function consultarProgreso() {
     if (!jobId) return;
     peticion("/api/job/" + jobId).then((resp) => {
-      if (!resp.ok) { clearInterval(pollTimer); btnConsultar.disabled = false; return; }
+      if (!resp.ok) { clearInterval(pollTimer); deshabilitarBotones(false); return; }
       return resp.json().then((data) => {
         logProgreso.textContent = data.progreso.join("\n");
         logProgreso.scrollTop = logProgreso.scrollHeight;
@@ -341,7 +390,8 @@ function iniciarPanel() {
           pctActual = 100;
           pintarPct();
           barraFill.classList.add("completo");
-          estadoJob.textContent = "Consulta completada.";
+          estadoJob.textContent =
+            data.tipo === "rut" ? "Copia del RUT obtenida." : "Consulta completada.";
           finalizarJob(data);
         } else if (data.estado === "error") {
           clearInterval(pollTimer);
@@ -349,9 +399,10 @@ function iniciarPanel() {
           barraFill.classList.add("error");
           estadoJob.textContent = "Error en el proceso.";
           mostrarMensaje(mensaje, data.error || "Falló la consulta.", "error");
-          btnConsultar.disabled = false;
+          deshabilitarBotones(false);
         } else if (data.estado === "running") {
-          estadoJob.textContent = "Procesando consulta...";
+          estadoJob.textContent =
+            tipoActual === "rut" ? "Obteniendo copia del RUT..." : "Procesando consulta...";
           pctObjetivo = pctPorHitos(data.progreso);
           iniciarAnimacion();
         } else {
@@ -366,9 +417,28 @@ function iniciarPanel() {
   function finalizarJob(data) {
     descargaBox.classList.remove("oculto");
     linkDescargar.href = "/api/job/" + jobId + "/descargar";
-    btnConsultar.disabled = false;
-    mostrarMensaje(mensaje, "Consulta completada.", "ok");
+    deshabilitarBotones(false);
 
+    const esRut = data.tipo === "rut";
+
+    // Elementos del veredicto de renta (solo aplican a la consulta ExoRenta)
+    ["printEncabezado", "resultadoVeredicto", "resultadoCabecera",
+     "resultadoAviso", "tablaTopes", "resultadoNota"].forEach(function (id) {
+      document.getElementById(id).classList.toggle("oculto", esRut);
+    });
+
+    const boxRut = document.getElementById("resultadoRut");
+    if (boxRut) boxRut.classList.toggle("oculto", !esRut);
+    if (btnImprimir) btnImprimir.classList.toggle("oculto", esRut);
+
+    // El botón DESCARGAR apunta al PDF del RUT listo para guardarse
+    if (esRut) {
+      document.getElementById("printFecha").textContent = "";
+      mostrarMensaje(mensaje, "Copia del RUT obtenida.", "ok");
+      return;
+    }
+
+    mostrarMensaje(mensaje, "Consulta completada.", "ok");
     const r = data.resultado || {};
     const declara = r.declara_renta === "Sí";
     document.getElementById("resultadoTitulo").textContent =

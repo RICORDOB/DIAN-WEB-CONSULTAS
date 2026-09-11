@@ -52,12 +52,22 @@ Sesión (con rate limit). Cuerpo:
 - Lanza una **consulta individual** (login DIAN → exógena → renta → FE) en segundo plano.
 - Respuesta: `{"job_id"}`. El progreso se consulta vía `GET /api/job/{job_id}`.
 
+### POST `/api/rut`
+Sesión (con rate limit). Cuerpo:
+`{"tipo_documento": str, "numero_documento": str, "contrasena": str}`.
+- Lanza la **obtención de la copia del RUT en PDF** en segundo plano: inicia sesión en
+  MUISCA con las mismas credenciales y descarga el certificado desde el dashboard
+  (enlace "Obtener copia RUT").
+- Respuesta: `{"job_id"}`. La descarga se hace vía `GET /api/job/{job_id}/descargar`.
+
 ### GET `/api/job/{job_id}`
 Solo el dueño. Devuelve el estado/progreso de una consulta individual:
-`{"estado": "queued|running|done|error", "progreso": [str], "final", "error", "resultado"}`.
+`{"estado": "queued|running|done|error", "tipo": "xls|rut", "progreso": [str], "final", "error", "resultado"}`.
 
 ### GET `/api/job/{job_id}/descargar`
-Solo el dueño. Devuelve el `.xls` de 3 hojas generado (`FileResponse`, `409` si aún no está listo).
+Solo el dueño. Devuelve el libro `.xls` de 3 hojas (consulta ExoRenta) o el **PDF del RUT**
+(cuando `tipo == "rut"`); `409` si aún no está listo. El media type lo define la extensión
+del archivo (`application/pdf` para `.pdf`, `application/vnd.ms-excel` para `.xls`).
 
 ---
 

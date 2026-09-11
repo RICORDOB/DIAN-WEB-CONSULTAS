@@ -110,6 +110,13 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0c1f3f; }
 .boton.peligro { background: #c62828; }
 .boton.ok { background: #2e7d32; }
 
+.botones-accion { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.botones-accion .boton { margin-top: 0; }
+@media (min-width: 560px) {
+  .botones-accion { flex-direction: row; flex-wrap: wrap; }
+  .botones-accion .boton { flex: 1 1 160px; }
+}
+
 .boton-enlace {
   background: none;
   border: none;
@@ -319,6 +326,14 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0c1f3f; }
   flex: none;
 }
 .resultado-titulo { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.resultado-rut {
+  padding: 14px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #2e7d32, #43a047);
+  color: #fff;
+  margin-bottom: 8px;
+}
+.resultado-rut .resultado-cabecera { color: #e8f5e9; margin: 6px 0 0; }
 .resultado-cliente { font-size: 13px; opacity: .92; margin-top: 2px; }
 .resultado-chip {
   display: inline-block;

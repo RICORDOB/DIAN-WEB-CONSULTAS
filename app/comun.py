@@ -39,6 +39,10 @@ AVISO_INFO_EXOGENA = (
 # Texto exacto del error "sin datos" de facturación electrónica en la DIAN
 TEXTO_SIN_DATOS_FE = "No se encontró información para el año seleccionado"
 
+# Enlace del dashboard autenticado que descarga directo el PDF del RUT
+# (Favoritos: "Obtener copia RUT — Descargue su certificado con un solo click.")
+TEXTO_RUT_FAVORITO = "Obtener copia RUT"
+
 # Calendario DIAN 2026 — Vencimiento declaración renta personas naturales AG 2025
 # Res. DIAN 000238 de 2025. Fechas según los dos últimos dígitos del NIT.
 CALENDARIO_RENTA_2026 = {

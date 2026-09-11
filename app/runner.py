@@ -38,6 +38,7 @@ from .comun import (
     NORMA_TOPES,
     REINTENTOS,
     RESOLUCION_UVT,
+    TEXTO_RUT_FAVORITO,
     TEXTO_SIN_DATOS_FE,
     TIMEOUT_DESCARGA,
     TOPES,
@@ -450,6 +451,42 @@ class DianRunner:
         self.loguear(f"  [ok] Archivo cliente generado: {final}")
         return final
 
+    async def _abrir_sesion(self, creds: dict):
+        """Lanza Chromium headless y hace login en MUISCA.
+
+        Devuelve (playwright, browser, context, page). En caso de login fallido
+        lanza RuntimeError con un mensaje legible y limpia los recursos.
+        """
+        self.loguear(f"  [Paso 1/4] Login en MUISCA...")
+        p = await async_playwright().start()
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+            ],
+        )
+        context = await browser.new_context(accept_downloads=True, locale="es-CO")
+        page = await context.new_page()
+        try:
+            estado_login = await self._intentar_login(page, creds)
+            if estado_login != "ok":
+                detalle = {
+                    "error_credenciales": "Credenciales rechazadas o mensaje de error en la página.",
+                    "desconocido": "No se pudo determinar el resultado del login.",
+                }[estado_login]
+                await page.screenshot(path=self.download_dir / "error_login.png")
+                raise RuntimeError(detalle)
+            self.loguear("  [ok] Sesión iniciada correctamente.")
+            return p, browser, context, page
+        except Exception:
+            await context.close()
+            await browser.close()
+            await p.stop()
+            raise
+
     async def consulta_individual(
         self,
         tipo_documento: str,
@@ -476,39 +513,72 @@ class DianRunner:
             f"Ingresando al portal DIAN ({num_documento_mascarado(numero_documento)})..."
         )
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--single-process",
-                ],
-            )
-            try:
-                context = await browser.new_context(accept_downloads=True, locale="es-CO")
-                page = await context.new_page()
+        p, browser, context, page = await self._abrir_sesion(creds)
+        try:
+            self.emitir_done("Sesión iniciada. Descargando reportes...")
+            final = await self._post_login(page, creds)
 
-                self.loguear(f"  [Paso 1/4] Login en MUISCA...")
-                estado_login = await self._intentar_login(page, creds)
-                if estado_login != "ok":
-                    detalle = {
-                        "error_credenciales": "Credenciales rechazadas o mensaje de error en la página.",
-                        "desconocido": "No se pudo determinar el resultado del login.",
-                    }[estado_login]
-                    await page.screenshot(path=self.download_dir / "error_login.png")
-                    raise RuntimeError(detalle)
+            self.emitir_done("Consulta completada. Libro generado.")
+            return final
+        finally:
+            await context.close()
+            await browser.close()
+            await p.stop()
 
-                self.loguear("  [ok] Sesión iniciada correctamente.")
-                self.emitir_done("Sesión iniciada. Descargando reportes...")
-                final = await self._post_login(page, creds)
+    async def descargar_certificado_rut(
+        self,
+        tipo_documento: str,
+        numero_documento: str,
+        contrasena: str,
+    ) -> Path:
+        """Obtiene la copia del RUT en PDF usando la sesión DIAN iniciada.
 
-                self.emitir_done("Consulta completada. Libro generado.")
-                return final
-            finally:
-                await context.close()
-                await browser.close()
+        En el dashboard autenticado, el enlace "Obtener copia RUT" descarga
+        directamente el certificado (sin captcha). Devuelve la ruta del PDF.
+        """
+        creds = {
+            "tipo_documento": tipo_documento,
+            "numero_documento": numero_documento,
+            "contrasena": contrasena,
+        }
+        self.loguear(f"[info] Copia del RUT: {tipo_documento} {numero_documento}")
+        self.emitir_done(
+            f"Ingresando al portal DIAN ({num_documento_mascarado(numero_documento)})..."
+        )
+
+        p, browser, context, page = await self._abrir_sesion(creds)
+        try:
+            self.emitir_done("Sesión iniciada. Obteniendo copia del RUT...")
+            await page.wait_for_timeout(1500)
+            await self._cerrar_modales_dian(page)
+
+            destino = self.download_dir / f"RUT_{numero_documento}.pdf"
+            for intento in range(1, REINTENTOS + 1):
+                try:
+                    async with page.expect_download(timeout=TIMEOUT_DESCARGA) as dl_info:
+                        await page.locator(
+                            "a", has_text=TEXTO_RUT_FAVORITO
+                        ).first.click()
+                        await self._cerrar_modales_dian(page)
+                        download = await dl_info.value
+                    await download.save_as(destino)
+                    if destino.exists() and destino.stat().st_size > 0:
+                        break
+                    raise RuntimeError("la descarga quedó vacía")
+                except Exception as exc:
+                    self.loguear(f"  [rut][reintento {intento}/{REINTENTOS}] "
+                                 f"{type(exc).__name__}: {exc}")
+                    if intento == REINTENTOS:
+                        raise
+                    await page.wait_for_timeout(1500)
+
+            self.loguear(f"  [ok] Copia del RUT descargada: {destino}")
+            self.emitir_done("Copia del RUT obtenida.")
+            return destino
+        finally:
+            await context.close()
+            await browser.close()
+            await p.stop()
 
 
 # Mantener la posicion de SUBIR_A_DRIVE accesible (utilizado por lógica futura de Drive)

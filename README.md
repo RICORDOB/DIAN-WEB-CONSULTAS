@@ -4,21 +4,23 @@ Aplicación web (FastAPI + Playwright) que replica la automatización original d
 consulta a la DIAN pero accesible desde **cualquier dispositivo por un navegador**,
 sin instalar nada en el equipo del usuario.
 
-> **Estado:** consultas **individuales** y **masivas** (panel Contadores con acceso
-> de pago activable por el administrador), notificaciones push, política de
-> privacidad y despliegue continuo en Render.
+> **Estado:** consultas **individuales** (ExoRenta + **copia del RUT en PDF**) y
+> **masivas** (panel Contadores con acceso de pago activable por el administrador),
+> notificaciones push, política de privacidad y despliegue continuo en Render.
 
 ## Flujo
 
 1. El usuario **se registra** (`/`) → su solicitud de alta queda **pendiente**.
 2. El **desarrollador/administrador** aprueba el alta desde su panel (`/dev`).
 3. Con la cuenta aprobada, el usuario inicia sesión y entra a `/panel`.
-4. En el panel escribe **tipo de documento, número de cédula y contraseña** y pulsa
-   **CONSULTAR**.
-5. En el servidor se ejecuta internamente el proceso (login DIAN → exógena →
-   análisis de renta → facturación electrónica), igual que al usar el script original.
-6. Al terminar, se habilita el botón **DESCARGAR RESULTADO**: el `.xls` de 3 hojas
-   (Información Exógena / Renta / Facturación Electrónica), idéntico al del script original.
+4. En el panel escribe **tipo de documento, número de cédula y contraseña** y elige una acción:
+   - **Consulta ExoRenta**: ejecuta en el servidor el proceso completo
+     (login DIAN → exógena → análisis de renta → facturación electrónica), igual que el script original.
+   - **Obtener copia del RUT**: con la misma sesión DIAN descarga el **certificado RUT en PDF**.
+   - **Certificado**: (próximamente) certificados de ingresos/renta.
+5. Al terminar, se habilita el botón **DESCARGAR**:
+   - Para la consulta ExoRenta: el `.xls` de 3 hojas (Información Exógena / Renta / Facturación Electrónica).
+   - Para el RUT: el **PDF** del certificado.
 
 ### Consultas masivas (panel Contadores)
 
@@ -39,7 +41,7 @@ sin instalar nada en el equipo del usuario.
 ```
 app/
   main.py        # API FastAPI + vistas y gestión de jobs/batches
-  runner.py      # núcleo reutilizado (DianRunner): login, descargas, análisis, armado
+  runner.py      # núcleo reutilizado (DianRunner): login, RUT, descargas, análisis, armado
   batch.py       # motor de consultas masivas: plantilla, cargar filas, ejecutar, estados
   auth.py        # usuarios, alta por aprobación, bloqueos, roles, sesiones firmadas
   db.py          # persistencia con dos backends: Turso (libSQL) y SQLite local

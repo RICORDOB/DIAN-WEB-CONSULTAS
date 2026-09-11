@@ -11,6 +11,7 @@ Rutas:
   POST /api/logout              -> cerrar sesión
   GET  /api/me                  -> sesión actual
   POST /api/consulta            -> iniciar consulta individual (crea job)
+  POST /api/rut                 -> obtener copia del RUT (PDF) del cliente
   GET  /api/job/{id}            -> estado/progreso de un job
   GET  /api/job/{id}/descargar  -> descargar el libro .xls resultante
   GET  /api/admin/pendientes    -> solicitudes de alta (requiere admin)
@@ -80,6 +81,7 @@ RATE_POR_RUTA = {
     "/api/login": 8,
     "/api/registro": 5,
     "/api/consulta": 10,
+    "/api/rut": 10,
 }
 
 
@@ -366,6 +368,7 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
     auth.registrar_consulta(job_id, usuario, body.tipo_documento)
     _jobs[job_id] = {
         "estado": "queued",
+        "tipo": "xls",
         "progreso": [],
         "final": None,
         "error": None,
@@ -421,6 +424,76 @@ async def api_consulta(body: ConsultaIn, sesion: str | None = Cookie(default=Non
     return {"job_id": job_id}
 
 
+@app.post("/api/rut")
+async def api_rut(body: ConsultaIn, sesion: str | None = Cookie(default=None)):
+    """Obtiene la copia del RUT (PDF) del cliente usando la sesión DIAN iniciada.
+
+    Requiere sesión de la app. Usa el mismo tipo/número/contraseña que la
+    consulta individual: inicia sesión en MUISCA y descarga el certificado.
+    """
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    usuario = s[0]
+
+    numero = body.numero_documento.strip()
+    if not numero or not body.contrasena:
+        raise HTTPException(status_code=400, detail="Cédula y contraseña son obligatorias.")
+    if not numero.isdigit():
+        raise HTTPException(status_code=400, detail="El número de cédula debe ser numérico.")
+
+    job_id = uuid.uuid4().hex
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    _jobs[job_id] = {
+        "estado": "queued",
+        "tipo": "rut",
+        "progreso": [],
+        "final": None,
+        "error": None,
+        "resultado": None,
+        "dir": job_dir,
+        "usuario": usuario,
+        "creado": time.time(),
+    }
+
+    async def _ejecutar():
+        async with _job_lock:
+            job = _jobs[job_id]
+            job["estado"] = "running"
+
+            def cb(msg: str, _done: bool):
+                job["progreso"].append(msg)
+
+            runner = DianRunner(job_dir=job_dir, progreso=cb)
+            try:
+                final = await runner.descargar_certificado_rut(
+                    body.tipo_documento, numero, body.contrasena
+                )
+                job["estado"] = "done"
+                job["final"] = str(final)
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Copia del RUT lista",
+                    "El certificado ya está disponible en tu panel.",
+                )
+            except Exception as exc:  # noqa: BLE001
+                job["estado"] = "error"
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                runner.emitir_done(f"Error: {exc}")
+                job["progreso"].append(f"Error: {exc}")
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Copia del RUT fallida",
+                    f"No se pudo obtener el RUT: {exc}",
+                )
+
+    asyncio.create_task(_ejecutar())
+    return {"job_id": job_id}
+
+
 @app.get("/api/job/{job_id}")
 async def api_job(job_id: str, sesion: str | None = Cookie(default=None)):
     s = _sesion(sesion)
@@ -429,6 +502,7 @@ async def api_job(job_id: str, sesion: str | None = Cookie(default=None)):
         raise HTTPException(status_code=404, detail="Job no encontrado.")
     return {
         "estado": job["estado"],
+        "tipo": job["tipo"],
         "progreso": job["progreso"][-50:],
         "final": job["final"],
         "error": job["error"],
@@ -444,10 +518,15 @@ async def api_descargar(job_id: str, sesion: str | None = Cookie(default=None)):
         raise HTTPException(status_code=404, detail="Job no encontrado.")
     if not job["final"] or not Path(job["final"]).exists():
         raise HTTPException(status_code=409, detail="El resultado aún no está listo.")
+    media_type = (
+        "application/pdf"
+        if job["final"].lower().endswith(".pdf")
+        else "application/vnd.ms-excel"
+    )
     return FileResponse(
         job["final"],
         filename=Path(job["final"]).name,
-        media_type="application/vnd.ms-excel",
+        media_type=media_type,
     )
 
 
