@@ -911,6 +911,44 @@ function iniciarDev() {
 }
 
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Descarga asistida sin navegación (evita que el visor de PDF interno */
+/* del navegador/PWA se cierre al abrir el archivo).                   */
+/* ------------------------------------------------------------------ */
+function iniciarDescargaBlob() {
+  const link = document.getElementById("linkDescargar");
+  if (!link) return;
+
+  link.addEventListener("click", (e) => {
+    const url = link.getAttribute("href");
+    if (!url || url === "#" || url.startsWith("blob:")) return;
+
+    e.preventDefault();
+    const nombre = url.split("/").pop() || "resultado";
+
+    peticion(url)
+      .then((resp) => {
+        if (!resp.ok) {
+          const cont = document.getElementById("mensaje");
+          if (cont) mostrarMensaje(cont, "No se pudo preparar la descarga.", "error");
+          throw new Error("descarga no disponible");
+        }
+        return resp.blob();
+      })
+      .then((blob) => {
+        const objeto = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objeto;
+        a.download = nombre;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(objeto), 4000);
+      })
+      .catch(() => { /* ya se informó al usuario */ });
+  });
+}
+
 /* Dispatcher por página                                               */
 /* ------------------------------------------------------------------ */
 document.addEventListener("DOMContentLoaded", () => {
@@ -919,9 +957,11 @@ document.addEventListener("DOMContentLoaded", () => {
     iniciarLogin();
   } else if (path === "/panel") {
     iniciarPanel();
+    iniciarDescargaBlob();
   } else if (path === "/dev") {
     iniciarDev();
   } else if (path === "/contadores") {
     iniciarContadores();
+    iniciarDescargaBlob();
   }
 });
