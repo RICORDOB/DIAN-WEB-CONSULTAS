@@ -53,6 +53,7 @@ from pydantic import BaseModel
 
 from . import auth
 from . import batch as batch_mod
+from . import db
 from . import push
 from .bot import cifrado, motor, tokens as bot_tokens
 from .runner import DianRunner
@@ -1027,6 +1028,8 @@ async def _limpieza_periodica() -> None:
 @app.on_event("startup")
 async def _startup():
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"[db] backend activo: {'turso' if db.turso_activado() else 'sqlite-local'} "
+          f"(APP_DATA_DIR={os.environ.get('APP_DATA_DIR', '')!r})", flush=True)
     auth.iniciar_db()
     auth.marcar_consultas_huerfanas()
     _limpiar_jobs_viejos()
