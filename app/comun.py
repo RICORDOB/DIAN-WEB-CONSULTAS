@@ -43,6 +43,21 @@ TEXTO_SIN_DATOS_FE = "No se encontró información para el año seleccionado"
 # (Favoritos: "Obtener copia RUT — Descargue su certificado con un solo click.")
 TEXTO_RUT_FAVORITO = "Obtener copia RUT"
 
+# Flujo "Declaraciones de renta presentadas" -> recibo de pago (formulario 490).
+# El botón del dashboard que abre la SPA "Selector de formularios".
+TEXTO_FORMULARIO_RENTA = "Renta Personas Naturales"
+TEXTO_DECLARACIONES_PRESENTADAS = "Declaraciones de renta presentadas"
+# Textos del modal de pago y de los botones del recibo (SPA Angular).
+TEXTO_SI_YES = "SI/YES"
+TEXTO_GENERAR_RECIBO = "Generar recibo"
+TEXTO_DESCARGAR_RECIBO = "Descargar recibo de pago"
+# Formato visible de la columna "Año / frecuencia" en la tabla de declaraciones.
+ETIQUETA_AÑO_ANUAL = "anual"
+
+# Años gravables válidos para la consulta de recibo de renta (los que el bot
+# puede buscar en "Declaraciones de renta presentadas").
+ANIOS_RECIBO_RENTA = ["2022", "2023", "2024", "2025"]
+
 # Calendario DIAN 2026 — Vencimiento declaración renta personas naturales AG 2025
 # Res. DIAN 000238 de 2025. Fechas según los dos últimos dígitos del NIT.
 CALENDARIO_RENTA_2026 = {

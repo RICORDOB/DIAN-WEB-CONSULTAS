@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>ExoRenta — Consulta</title>
-<link rel="stylesheet" href="/assets/styles.css?v=20260911r5" />
+<link rel="stylesheet" href="/assets/styles.css?v=20260912r1" />
 </head>
 <body>
   <header class="barra">
@@ -56,10 +56,32 @@
       <div class="botones-accion">
         <button type="button" class="boton" id="btnConsultar">Consulta ExoRenta</button>
         <button type="button" class="boton secundario" id="btnRut">Obtener copia del RUT</button>
-        <button type="button" class="boton secundario" id="btnCertificado" disabled
-                title="Disponible próximamente">Certificado</button>
+        <button type="button" class="boton secundario" id="btnCertificado">Recibo de pago de renta</button>
       </div>
     </form>
+
+    <div id="reciboWizard" class="oculto">
+      <h3>Recibo de pago de declaración de renta</h3>
+      <p class="subtitulo">La DIAN entrega el recibo (formulario 490) del pago de tu
+        declaración de renta (formulario 210). Escribe el año gravable y la fecha de pago del recibo.</p>
+      <div class="formulario">
+        <label for="reciboAnio">Año gravable de la declaración</label>
+        <select id="reciboAnio">
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
+          <option value="2023">2023</option>
+          <option value="2022">2022</option>
+        </select>
+
+        <label for="reciboFecha">Fecha de pago del recibo</label>
+        <input type="date" id="reciboFecha" required />
+
+        <div class="botones-accion">
+          <button type="button" class="boton" id="btnReciboOk">Descargar recibo de pago</button>
+          <button type="button" class="boton secundario" id="btnReciboCancelar">Cancelar</button>
+        </div>
+      </div>
+    </div>
 
     <div id="progresoBox" class="oculto">
       <h3>Progreso</h3>
@@ -89,6 +111,12 @@
           <div class="resultado-titulo">&#10003; Copia del RUT obtenida</div>
           <p class="resultado-cabecera">El certificado del RUT fue descargado del portal DIAN.
             Presiona DESCARGAR para guardar el PDF.</p>
+        </div>
+
+        <div class="resultado-recibo oculto" id="resultadoRecibo">
+          <div class="resultado-titulo">&#10003; Recibo de pago obtenido</div>
+          <p class="resultado-cabecera">El recibo de pago (formulario 490) de tu declaración
+            de renta fue descargado del portal DIAN. Presiona DESCARGAR para guardar el PDF.</p>
         </div>
 
         <div class="resultado-veredicto verdict-no" id="resultadoVeredicto">
@@ -125,6 +153,6 @@
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-<script src="/assets/app.js?v=20260911r5"></script>
+<script src="/assets/app.js?v=20260912r1"></script>
 </body>
 </html>

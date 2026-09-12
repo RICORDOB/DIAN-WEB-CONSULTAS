@@ -264,9 +264,21 @@ function iniciarPanel() {
     ["copia del rut obtenida", 95],
   ];
 
+  // Hitos del recibo de pago de declaración (formulario 490, vía 210).
+  const HITOS_RECIBO = [
+    ["login en muisca", 15],
+    ["sesión iniciada", 40],
+    ["formulario 210", 55],
+    ["declaraciones de renta presentadas", 65],
+    ["confirmación si/yes", 75],
+    ["recibo generado", 85],
+    ["recibo descargado", 95],
+  ];
+
   function pctPorHitos(lineas) {
     const texto = (lineas.join("\n") || "").toLowerCase();
-    const hitos = tipoActual === "rut" ? HITOS_RUT : HITOS;
+    const hitos = tipoActual === "rut" ? HITOS_RUT
+      : (tipoActual === "recibo" ? HITOS_RECIBO : HITOS);
     let obj = 8;
     hitos.forEach((par) => {
       if (texto.includes(par[0])) obj = Math.max(obj, par[1]);
@@ -322,7 +334,7 @@ function iniciarPanel() {
     });
   }
 
-  function lanzar(tipo, endpoint) {
+  function lanzar(tipo, endpoint, extra) {
     if (jobId) { mostrarMensaje(mensaje, "Ya hay una consulta en curso.", "info"); return; }
     if (!camposValidos()) return;
 
@@ -344,11 +356,11 @@ function iniciarPanel() {
 
     peticion(endpoint, {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(Object.assign({
         tipo_documento: tipoDocumento,
         numero_documento: numeroDocumento,
         contrasena: contrasena,
-      }),
+      }, extra || {})),
     }).then((resp) => {
       if (!resp.ok) {
         deshabilitarBotones(false);
@@ -364,9 +376,37 @@ function iniciarPanel() {
 
   btnConsultar.addEventListener("click", () => lanzar("consulta", "/api/consulta"));
   btnRut.addEventListener("click", () => lanzar("rut", "/api/rut"));
+
+  // Wizard guiado para el recibo de pago de declaración de renta (490)
+  const reciboWizard = document.getElementById("reciboWizard");
+  const reciboAnio = document.getElementById("reciboAnio");
+  const reciboFecha = document.getElementById("reciboFecha");
+  const btnReciboOk = document.getElementById("btnReciboOk");
+  const btnReciboCancelar = document.getElementById("btnReciboCancelar");
+
   btnCertificado.addEventListener("click", () => {
-    mostrarMensaje(mensaje, "El certificado de ingresos/renta estará disponible próximamente.", "info");
+    if (jobId) { mostrarMensaje(mensaje, "Ya hay una consulta en curso.", "info"); return; }
+    if (reciboFecha) {
+      reciboFecha.value = new Date().toISOString().slice(0, 10);
+    }
+    if (reciboWizard) reciboWizard.classList.remove("oculto");
+    if (mensaje) mensaje.classList.add("oculto");
   });
+  if (btnReciboCancelar) {
+    btnReciboCancelar.addEventListener("click", () => reciboWizard.classList.add("oculto"));
+  }
+  if (btnReciboOk) {
+    btnReciboOk.addEventListener("click", () => {
+      const fecha = reciboFecha && reciboFecha.value;
+      if (!fecha) {
+        mostrarMensaje(mensaje, "Elige la fecha de pago del recibo.", "error");
+        return;
+      }
+      const anio = reciboAnio ? reciboAnio.value : "2025";
+      reciboWizard.classList.add("oculto");
+      lanzar("recibo", "/api/recibo", { anio: anio, fecha_pago: fecha });
+    });
+  }
 
   // Al presionar Enter en el formulario se lanza la consulta ExoRenta
   form.addEventListener("keydown", (e) => {
@@ -391,7 +431,9 @@ function iniciarPanel() {
           pintarPct();
           barraFill.classList.add("completo");
           estadoJob.textContent =
-            data.tipo === "rut" ? "Copia del RUT obtenida." : "Consulta completada.";
+            data.tipo === "rut" ? "Copia del RUT obtenida."
+            : (data.tipo === "recibo" ? "Recibo de pago obtenido."
+               : "Consulta completada.");
           finalizarJob(data);
         } else if (data.estado === "error") {
           clearInterval(pollTimer);
@@ -402,7 +444,9 @@ function iniciarPanel() {
           deshabilitarBotones(false);
         } else if (data.estado === "running") {
           estadoJob.textContent =
-            tipoActual === "rut" ? "Obteniendo copia del RUT..." : "Procesando consulta...";
+            tipoActual === "rut" ? "Obteniendo copia del RUT..."
+            : (tipoActual === "recibo" ? "Descargando recibo de pago..."
+               : "Procesando consulta...");
           pctObjetivo = pctPorHitos(data.progreso);
           iniciarAnimacion();
         } else {
@@ -420,21 +464,25 @@ function iniciarPanel() {
     deshabilitarBotones(false);
 
     const esRut = data.tipo === "rut";
+    const esRecibo = data.tipo === "recibo";
+    const esPdf = esRut || esRecibo;
 
     // Elementos del veredicto de renta (solo aplican a la consulta ExoRenta)
     ["printEncabezado", "resultadoVeredicto", "resultadoCabecera",
      "resultadoAviso", "tablaTopes", "resultadoNota"].forEach(function (id) {
-      document.getElementById(id).classList.toggle("oculto", esRut);
+      document.getElementById(id).classList.toggle("oculto", esPdf);
     });
 
     const boxRut = document.getElementById("resultadoRut");
     if (boxRut) boxRut.classList.toggle("oculto", !esRut);
-    if (btnImprimir) btnImprimir.classList.toggle("oculto", esRut);
+    const boxRecibo = document.getElementById("resultadoRecibo");
+    if (boxRecibo) boxRecibo.classList.toggle("oculto", !esRecibo);
+    if (btnImprimir) btnImprimir.classList.toggle("oculto", esPdf);
 
-    // El botón DESCARGAR apunta al PDF del RUT listo para guardarse
-    if (esRut) {
+    // El botón DESCARGAR apunta al PDF (RUT o recibo) listo para guardarse
+    if (esPdf) {
       document.getElementById("printFecha").textContent = "";
-      mostrarMensaje(mensaje, "Copia del RUT obtenida.", "ok");
+      mostrarMensaje(mensaje, esRut ? "Copia del RUT obtenida." : "Recibo de pago obtenido.", "ok");
       return;
     }
 
