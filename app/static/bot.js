@@ -35,7 +35,7 @@
   var dom = construirDom();
   var mensajes = dom.caja.querySelector(".bot-mensajes");
   var input = dom.caja.querySelector("input");
-  var enviar = dom.caja.querySelector("button.bot-entrada button");
+  var enviar = dom.caja.querySelector(".bot-entrada button");
   var cerrado = dom.caja.querySelector(".bot-cerrar");
   var ocupado = false;
 
@@ -214,10 +214,12 @@
 
   dom.abrir.addEventListener("click", abrirChat);
   cerrado.addEventListener("click", cerrarChat);
-  enviar.addEventListener("click", function () { enviarMensaje(input.value); });
-  input.addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); enviarMensaje(input.value); }
-  });
+  if (enviar) enviar.addEventListener("click", function () { enviarMensaje(input.value); });
+  if (input) {
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); enviarMensaje(input.value); }
+    });
+  }
 
   // Primer contacto automático al abrir la página (burbujón de bienvenida).
   window.addEventListener("load", function () {
