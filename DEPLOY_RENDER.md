@@ -92,8 +92,13 @@ arranque. Para operar:
 
 1. Abre la URL de la app e inicia sesión como admin → te lleva al **Panel
    Desarrollador** (`/dev`).
-2. Desde ahí: aprueba/rechaza altas, bloquea/desbloquea usuarios y **activa el
-   acceso Contador** (consultas masivas de pago).
+2. Desde ahí: aprueba/rechaza altas, bloquea/desbloquea usuarios, **activa el
+   acceso Contador** (consultas masivas de pago) y **sube el catálogo del chat bot**
+   (pestaña **Catálogo bot**: archivo `.xlsx`, total, lista y eliminar por cédula;
+   equivale a `POST/GET/DELETE /api/admin/clientes`).
+3. El catálogo persiste en la BD activa; en producción es **Turso**, por lo que
+   sobrevive a los deploys (verificador: tras un redeploy la cédula sigue operando
+   en el chat de la `/`).
 
 ---
 

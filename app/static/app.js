@@ -628,18 +628,24 @@ function iniciarDev() {
   const mensaje = document.getElementById("mensaje");
   const btnTabU = document.getElementById("tabUsuarios");
   const btnTabD = document.getElementById("tabDashboard");
+  const btnTabC = document.getElementById("tabClientes");
   const vistaU = document.getElementById("vistaUsuarios");
   const vistaD = document.getElementById("vistaDashboard");
+  const vistaC = document.getElementById("vistaClientes");
 
   function activarTab(vista) {
     btnTabU.classList.toggle("activo", vista === "usuarios");
     btnTabD.classList.toggle("activo", vista === "dashboard");
+    btnTabC.classList.toggle("activo", vista === "clientes");
     vistaU.classList.toggle("oculto", vista !== "usuarios");
     vistaD.classList.toggle("oculto", vista !== "dashboard");
+    vistaC.classList.toggle("oculto", vista !== "clientes");
     if (vista === "dashboard") cargarDashboard();
+    if (vista === "clientes") cargarClientes();
   }
   btnTabU.addEventListener("click", () => activarTab("usuarios"));
   btnTabD.addEventListener("click", () => activarTab("dashboard"));
+  btnTabC.addEventListener("click", () => activarTab("clientes"));
   activarTab("usuarios");
 
   /* -------- Tab Usuarios -------- */
@@ -755,6 +761,92 @@ function iniciarDev() {
   }
 
   cargar();
+
+  /* -------- Tab Catálogo bot -------- */
+  const totalClientesEl = document.getElementById("totalClientes");
+  const archivoClientes = document.getElementById("archivoClientes");
+  const btnSubirClientes = document.getElementById("btnSubirClientes");
+  const tbodyClientes = document.querySelector("#tablaClientes tbody");
+
+  function cargarClientes() {
+    peticion("/api/admin/clientes").then((resp) => {
+      if (!resp.ok) {
+        if (resp.status === 403) { window.location.href = "/panel"; }
+        return manejarError(resp, mensaje);
+      }
+      return resp.json().then((data) => {
+        totalClientesEl.textContent = String(data.total);
+        tbodyClientes.innerHTML = "";
+        if (!data.clientes.length) {
+          const fila = document.createElement("tr");
+          fila.innerHTML = '<td colspan="5">Sin clientes en el catálogo todavía. Sube un archivo .xlsx para comenzar.</td>';
+          tbodyClientes.appendChild(fila);
+          return;
+        }
+        data.clientes.forEach((c) => {
+          const fila = document.createElement("tr");
+          fila.innerHTML =
+            "<td>" + escapar(c.numero_documento) + "</td>" +
+            "<td>" + escapar(c.tipo_documento || "") + "</td>" +
+            "<td>" + escapar(c.fecha_vencimiento || "—") + "</td>" +
+            "<td>" + escapar(c.creado_en || "") + "</td>" +
+            "<td></td>";
+          fila.lastElementChild.appendChild(btnAccion(
+            "Eliminar", "peligro", () => eliminarCliente(c.numero_documento)
+          ));
+          tbodyClientes.appendChild(fila);
+        });
+      });
+    });
+  }
+
+  function subirCatalogo() {
+    const archivo = archivoClientes.files[0];
+    if (!archivo) {
+      mostrarMensaje(mensaje, "Selecciona primero un archivo .xlsx.", "error");
+      return;
+    }
+    const datos = new FormData();
+    datos.append("archivo", archivo);
+    btnSubirClientes.disabled = true;
+    btnSubirClientes.textContent = "Subiendo…";
+    peticion("/api/admin/clientes", { method: "POST", body: datos }).then((resp) => {
+      btnSubirClientes.disabled = false;
+      btnSubirClientes.textContent = "Subir catálogo";
+      if (!resp.ok) {
+        if (resp.status === 403) { window.location.href = "/panel"; }
+        return manejarError(resp, mensaje);
+      }
+      return resp.json().then((data) => {
+        mostrarMensaje(mensaje,
+          "Catálogo subido: " + data.cargados + " nuevos, " +
+          data.actualizados + " actualizados, " + data.total + " en el archivo.",
+          "ok");
+        archivoClientes.value = "";
+        cargarClientes();
+      });
+    }).catch(() => {
+      btnSubirClientes.disabled = false;
+      btnSubirClientes.textContent = "Subir catálogo";
+    });
+  }
+
+  function eliminarCliente(cedula) {
+    if (!window.confirm(
+      "¿Eliminar al cliente '" + cedula + "' del catálogo?\n\n" +
+      "Perderá el acceso al bot con esa cédula. Esta acción no se puede deshacer."
+    )) return;
+    peticion("/api/admin/clientes/" + encodeURIComponent(cedula), { method: "DELETE" })
+      .then((resp) => {
+        if (!resp.ok) return manejarError(resp, mensaje);
+        return resp.json().then(() => {
+          mostrarMensaje(mensaje, "Cliente eliminado del catálogo.", "ok");
+          cargarClientes();
+        });
+      });
+  }
+
+  btnSubirClientes.addEventListener("click", subirCatalogo);
 
   /* -------- Tab Dashboard -------- */
   function cargarDashboard() {

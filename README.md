@@ -29,8 +29,9 @@ sin instalar nada en el equipo del usuario.
 - Si existe en el catálogo (`clientes_autorizados`), el bot ofrece la **copia del RUT**
   o la **Consulta ExoRenta** usando la credencial guardada y entrega el archivo en el
   chat (enlaces de descarga **1-uso y 15 min**).
-- Catálogo: el admin sube `clientes_dian.xlsx` desde `/dev`
-  (`POST /api/admin/clientes`); el sistema **cifra** cada contraseña con Fernet
+- Catálogo: el admin sube `clientes_dian.xlsx` desde `/dev` (pestaña **Catálogo bot**,
+  con total, lista y eliminar por cédula; equivalente a `POST /api/admin/clientes`);
+  el sistema **cifra** cada contraseña con Fernet
   (clave derivada de `APP_SECRET_KEY`) antes de persistir. Las credenciales nunca salen
   de la BD en la respuesta.
 - Si la cédula no está registrada, el bot deriva al usuario al **flujo manual**

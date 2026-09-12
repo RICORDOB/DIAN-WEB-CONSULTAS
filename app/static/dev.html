@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>ExoRenta — Desarrollador</title>
-<link rel="stylesheet" href="/assets/styles.css?v=20260911r4" />
+<link rel="stylesheet" href="/assets/styles.css?v=20260911r5" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -31,6 +31,7 @@
   <nav class="tabs">
     <button class="tab activo" id="tabUsuarios">Usuarios</button>
     <button class="tab" id="tabDashboard">Dashboard</button>
+    <button class="tab" id="tabClientes">Catálogo bot</button>
   </nav>
 
   <!-- Vista: gestión de usuarios -->
@@ -103,10 +104,39 @@
     </div>
   </section>
 
+  <!-- Vista: catálogo de clientes del bot -->
+  <section class="card panel-ancho vista oculto" id="vistaClientes">
+    <h1>Catálogo del chat bot</h1>
+    <p class="subtitulo">Sube un archivo <code>.xlsx</code> con columnas
+      <code>tipo_documento, numero_documento, contrasena, fecha_vencimiento, estado</code>.
+      Las credenciales se cifran antes de guardarse; nunca se muestran aquí. Total:
+      <strong id="totalClientes">—</strong>.</p>
+
+    <div class="filtros">
+      <input type="file" id="archivoClientes" accept=".xlsx,.xlsm" />
+      <button class="boton boton-mini" id="btnSubirClientes">Subir catálogo</button>
+    </div>
+
+    <div class="tabla-envoltura">
+      <table class="tabla" id="tablaClientes">
+        <thead>
+          <tr>
+            <th>Cédula</th>
+            <th>Tipo doc.</th>
+            <th>Vencimiento</th>
+            <th>Creado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
   <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.<br />
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-<script src="/assets/app.js?v=20260911r4"></script>
+<script src="/assets/app.js?v=20260911r5"></script>
 </body>
 </html>
