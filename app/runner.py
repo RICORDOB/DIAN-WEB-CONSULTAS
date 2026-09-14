@@ -636,15 +636,34 @@ class DianRunner:
             await self._cerrar_modales_dian(page)
 
             # 1) Abrir la SPA "Selector de formularios" desde el dashboard.
+            #    En producción la SPA tarda más de 10s en montarse, así que
+            #    esperamos a que el bootstrap desaparezca antes del clic y
+            #    reintentamos hasta 3 veces (patrón usado en el resto del flujo).
             try:
-                await page.locator(
-                    "input[id*='btnDiligenciarPresentar']"
-                ).first.click(force=True, timeout=10000)
-            except Exception as exc:
+                await page.wait_for_selector(
+                    "#pre-bootstrap", state="hidden", timeout=30000
+                )
+            except Exception:
+                pass
+            ultimo_error = None
+            for intento in range(1, REINTENTOS + 1):
+                try:
+                    await page.locator(
+                        "input[id*='btnDiligenciarPresentar']"
+                    ).first.click(force=True, timeout=15000)
+                    break
+                except Exception as exc:
+                    ultimo_error = exc
+                    self.loguear(
+                        "  [info] Reintentando botón 'Diligenciar y presentar' "
+                        f"({intento}/{REINTENTOS})..."
+                    )
+                    await page.wait_for_timeout(3500)
+            else:
                 raise RuntimeError(
                     "No se encontró el botón 'Diligenciar y presentar'. "
-                    f"({type(exc).__name__})"
-                ) from exc
+                    f"({type(ultimo_error).__name__} si hubo error)"
+                ) from ultimo_error
 
             formulario = page.get_by_text(
                 TEXTO_FORMULARIO_RENTA, exact=False
