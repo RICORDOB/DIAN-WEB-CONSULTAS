@@ -30,3 +30,5 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+# Inspecciones locales (no subir)
+.inspeccion_*/
