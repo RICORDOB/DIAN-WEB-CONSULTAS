@@ -13,7 +13,6 @@ instante de construir la orden para el runner y se descartan de inmediato.
 
 from __future__ import annotations
 
-import re
 import time
 import uuid
 
@@ -25,9 +24,6 @@ ESPERA_CEDULA = "espera_cedula"
 NO_CLIENTE = "no_cliente"
 ESPERA_OPCION = "espera_opcion"
 PROCESANDO = "procesando"
-# Pasos del asistente para el recibo de pago de declaración de renta
-ESPERA_ANIO = "espera_anio"
-ESPERA_FECHA = "espera_fecha"
 
 # Tiempo de inactividad antes de limpiar una conversación (15 min)
 INACTIVIDAD_SEG = 15 * 60
@@ -35,7 +31,6 @@ INACTIVIDAD_SEG = 15 * 60
 # Acciones disponibles para un cliente identificado
 ACCION_RUT = "rut"
 ACCION_CONSULTA = "consulta"
-ACCION_RECIBO = "recibo"
 
 # ---------------------------------------------------------------------------
 # Almacén en memoria de conversaciones
@@ -51,8 +46,6 @@ def nuevo_chat() -> str:
         "cedula": None,
         "cliente": None,
         "opcion": None,
-        "anio": None,
-        "fecha_pago": None,
         "ultimo_acceso": time.time(),
     }
     return chat_id
@@ -121,8 +114,7 @@ def manejar_mensaje(chat_id: str, texto: str) -> dict:
     c = estado(chat_id)
     if c is None:
         c = {"estado": ESPERA_CEDULA, "cedula": None, "cliente": None,
-             "opcion": None, "anio": None, "fecha_pago": None,
-             "ultimo_acceso": time.time()}
+             "opcion": None, "ultimo_acceso": time.time()}
         _chats[chat_id] = c
 
     if c["estado"] == PROCESANDO:
@@ -132,48 +124,6 @@ def manejar_mensaje(chat_id: str, texto: str) -> dict:
         return _respuesta(
             ["Selecciona una opción para continuar, por favor."],
             acciones=_opciones_cliente(),
-        )
-
-    if c["estado"] == ESPERA_ANIO:
-        anio = (texto or "").strip()
-        if not (anio.isdigit() and len(anio) == 4 and 2000 <= int(anio) <= 2100):
-            return _respuesta(["Escribe el año con 4 dígitos (ej. 2025)."])
-        c["anio"] = anio
-        c["estado"] = ESPERA_FECHA
-        return _respuesta([
-            "2) ¿En qué fecha quieres el recibo de pago?",
-            "Escribe la fecha en formato AAAA-MM-DD (ej. 2026-09-30).",
-        ])
-
-    if c["estado"] == ESPERA_FECHA:
-        fecha = (texto or "").strip()
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
-            return _respuesta(["Usa el formato AAAA-MM-DD (ej. 2026-09-30)."])
-        c["fecha_pago"] = fecha
-        c["estado"] = PROCESANDO
-        cliente = auth.buscar_cliente(c["cedula"])
-        if cliente is None:
-            c["estado"] = NO_CLIENTE
-            return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
-        try:
-            contrasena = cifrado.descifrar(cliente["contrasena_cifrada"])
-        except ValueError:
-            c["estado"] = NO_CLIENTE
-            return _respuesta([
-                "No pude leer tu credencial guardada, probablemente por un cambio "
-                "de configuración del servicio. Contacta al administrador.",
-            ])
-        return _respuesta(
-            [f"¡Perfecto! Descargando el recibo de pago de tu declaración de "
-             f"renta {c['anio']} con fecha {fecha}... ⏳"],
-            lanzar={
-                "tipo": ACCION_RECIBO,
-                "tipo_documento": c["cliente"]["tipo_documento"],
-                "numero_documento": c["cedula"],
-                "contrasena": contrasena,
-                "anio": c["anio"],
-                "fecha_pago": fecha,
-            },
         )
 
     if _es_saludo((texto or "").strip()):
@@ -222,7 +172,6 @@ def _opciones_cliente() -> dict:
     return {
         ACCION_RUT: {"texto": "🪪 Copia del RUT (PDF)"},
         ACCION_CONSULTA: {"texto": "📋 Consulta ExoRenta (libro xls)"},
-        ACCION_RECIBO: {"texto": "🧾 Recibo de pago de declaración de renta (PDF)"},
     }
 
 
@@ -266,7 +215,7 @@ def manejar_accion(chat_id: str, accion: str) -> dict:
     if c["estado"] != ESPERA_OPCION or not c["cliente"]:
         return _respuesta(["Escríbeme tu número de cédula para empezar. 📱"])
 
-    if accion not in (ACCION_RUT, ACCION_CONSULTA, ACCION_RECIBO):
+    if accion not in (ACCION_RUT, ACCION_CONSULTA):
         return _respuesta(
             ["Elige una de las opciones, por favor."],
             acciones=_opciones_cliente(),
@@ -285,16 +234,6 @@ def manejar_accion(chat_id: str, accion: str) -> dict:
             "No pude leer tu credencial guardada, probablemente por un cambio "
             "de configuración del servicio. Contacta al administrador.",
         ])
-
-    if accion == ACCION_RECIBO:
-        c["estado"] = ESPERA_ANIO
-        return _respuesta(
-            [
-                "El recibo de pago de tu declaración de renta se descarga del "
-                "portal DIAN en PDF (formulario 490).",
-                "1) ¿En qué año gravable presentaste la declaración? (ej. 2025)",
-            ],
-        )
 
     c["estado"] = PROCESANDO
     etiqueta = "la copia del RUT (PDF)" if accion == ACCION_RUT else "la consulta ExoRenta"
@@ -326,8 +265,6 @@ def finalizar(chat_id: str, error: str | None = None) -> dict:
         return _respuesta(["La conversación expiró."])
     c["estado"] = ESPERA_CEDULA
     c["opcion"] = None
-    c["anio"] = None
-    c["fecha_pago"] = None
     if error:
         return _respuesta([
             "Lo siento, no pude completar el proceso. ⚠️",

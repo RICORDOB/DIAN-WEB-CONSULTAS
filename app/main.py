@@ -12,7 +12,6 @@ Rutas:
   GET  /api/me                  -> sesión actual
   POST /api/consulta            -> iniciar consulta individual (crea job)
   POST /api/rut                 -> obtener copia del RUT (PDF) del cliente
-  POST /api/recibo              -> descargar recibo de pago 490 (PDF) de renta
   GET  /api/job/{id}            -> estado/progreso de un job
   GET  /api/job/{id}/descargar  -> descargar el libro .xls resultante
   GET  /api/admin/pendientes    -> solicitudes de alta (requiere admin)
@@ -40,7 +39,6 @@ from __future__ import annotations
 import asyncio
 import io
 import os
-import re
 import shutil
 import time
 import uuid
@@ -58,7 +56,6 @@ from . import batch as batch_mod
 from . import db
 from . import push
 from .bot import cifrado, motor, tokens as bot_tokens
-from .comun import ANIOS_RECIBO_RENTA
 from .runner import DianRunner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -94,7 +91,6 @@ RATE_POR_RUTA = {
     "/api/registro": 5,
     "/api/consulta": 10,
     "/api/rut": 10,
-    "/api/recibo": 10,
     "/api/admin/clientes": 5,
     "/api/bot/mensaje": 30,
     "/api/bot/accion": 30,
@@ -145,21 +141,6 @@ class ConsultaIn(BaseModel):
     tipo_documento: str = "Cédula de Ciudadanía"
     numero_documento: str
     contrasena: str
-
-
-class ReciboIn(BaseModel):
-    tipo_documento: str = "Cédula de Ciudadanía"
-    numero_documento: str
-    contrasena: str
-    anio: str
-    fecha_pago: str
-
-
-class DeclaracionIn(BaseModel):
-    tipo_documento: str = "Cédula de Ciudadanía"
-    numero_documento: str
-    contrasena: str
-    anio: str
 
 
 class DecidirIn(BaseModel):
@@ -519,170 +500,6 @@ async def api_rut(body: ConsultaIn, sesion: str | None = Cookie(default=None)):
                     usuario,
                     "Copia del RUT fallida",
                     f"No se pudo obtener el RUT: {exc}",
-                )
-
-    asyncio.create_task(_ejecutar())
-    return {"job_id": job_id}
-
-
-@app.post("/api/declaracion")
-async def api_declaracion(body: DeclaracionIn, sesion: str | None = Cookie(default=None)):
-    """Descarga la declaración de renta (formulario 210, PDF) presentada.
-
-    Pide el año gravable de la declaración. Reusa las credenciales DIAN del
-    formulario del panel y ejecuta el flujo verificado: 210 -> Declaraciones de
-    renta presentadas -> fila del año -> botón "Descargar" de la fila (tooltip
-    "Descargar") -> PDF de la declaración 210 presentada.
-    """
-    s = _sesion(sesion)
-    if not s:
-        raise HTTPException(status_code=401, detail="No autenticado.")
-    usuario = s[0]
-
-    numero = body.numero_documento.strip()
-    if not numero or not body.contrasena:
-        raise HTTPException(status_code=400, detail="Cédula y contraseña son obligatorias.")
-    if not numero.isdigit():
-        raise HTTPException(status_code=400, detail="El número de cédula debe ser numérico.")
-    anio = body.anio.strip()
-    if anio not in ANIOS_RECIBO_RENTA:
-        raise HTTPException(
-            status_code=400,
-            detail="El año de la declaración debe ser uno de: "
-            + ", ".join(ANIOS_RECIBO_RENTA) + ".",
-        )
-
-    job_id = uuid.uuid4().hex
-    job_dir = JOBS_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    _jobs[job_id] = {
-        "estado": "queued",
-        "tipo": "declaracion",
-        "progreso": [],
-        "final": None,
-        "error": None,
-        "resultado": None,
-        "dir": job_dir,
-        "usuario": usuario,
-        "creado": time.time(),
-    }
-
-    async def _ejecutar():
-        async with _job_lock:
-            job = _jobs[job_id]
-            job["estado"] = "running"
-
-            def cb(msg: str, _done: bool):
-                job["progreso"].append(msg)
-
-            runner = DianRunner(job_dir=job_dir, progreso=cb)
-            try:
-                final = await runner.descargar_declaracion_renta(
-                    body.tipo_documento, numero, body.contrasena, anio,
-                )
-                job["estado"] = "done"
-                job["final"] = str(final)
-                await asyncio.to_thread(
-                    push.notificar,
-                    usuario,
-                    "Declaración de renta lista",
-                    "La declaración 210 ya está disponible en tu panel.",
-                )
-            except Exception as exc:  # noqa: BLE001
-                job["estado"] = "error"
-                job["error"] = f"{type(exc).__name__}: {exc}"
-                runner.emitir_done(f"Error: {exc}")
-                job["progreso"].append(f"Error: {exc}")
-                await asyncio.to_thread(
-                    push.notificar,
-                    usuario,
-                    "Descarga de declaración fallida",
-                    f"No se pudo obtener la declaración: {exc}",
-                )
-
-    asyncio.create_task(_ejecutar())
-    return {"job_id": job_id}
-
-
-@app.post("/api/recibo")
-async def api_recibo(body: ReciboIn, sesion: str | None = Cookie(default=None)):
-    """Descarga el recibo de pago (formulario 490) de la declaración de renta.
-
-    Pide el año gravable de la declaración y la fecha de pago del recibo
-    (AAAA-MM-DD). Reusa las credenciales DIAN del formulario del panel y ejecuta
-    el flujo verificado: 210 -> presentadas -> Pagar -> SI/YES -> fecha ->
-    Generar recibo -> Descargar recibo (PDF).
-    """
-    s = _sesion(sesion)
-    if not s:
-        raise HTTPException(status_code=401, detail="No autenticado.")
-    usuario = s[0]
-
-    numero = body.numero_documento.strip()
-    if not numero or not body.contrasena:
-        raise HTTPException(status_code=400, detail="Cédula y contraseña son obligatorias.")
-    if not numero.isdigit():
-        raise HTTPException(status_code=400, detail="El número de cédula debe ser numérico.")
-    anio = body.anio.strip()
-    if anio not in ANIOS_RECIBO_RENTA:
-        raise HTTPException(
-            status_code=400,
-            detail="El año de la declaración debe ser uno de: "
-            + ", ".join(ANIOS_RECIBO_RENTA) + ".",
-        )
-    fecha_pago = body.fecha_pago.strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha_pago):
-        raise HTTPException(
-            status_code=400, detail="La fecha de pago debe tener formato AAAA-MM-DD."
-        )
-
-    job_id = uuid.uuid4().hex
-    job_dir = JOBS_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    _jobs[job_id] = {
-        "estado": "queued",
-        "tipo": "recibo",
-        "progreso": [],
-        "final": None,
-        "error": None,
-        "resultado": None,
-        "dir": job_dir,
-        "usuario": usuario,
-        "creado": time.time(),
-    }
-
-    async def _ejecutar():
-        async with _job_lock:
-            job = _jobs[job_id]
-            job["estado"] = "running"
-
-            def cb(msg: str, _done: bool):
-                job["progreso"].append(msg)
-
-            runner = DianRunner(job_dir=job_dir, progreso=cb)
-            try:
-                final = await runner.descargar_recibo_pago(
-                    body.tipo_documento, numero, body.contrasena,
-                    anio, fecha_pago,
-                )
-                job["estado"] = "done"
-                job["final"] = str(final)
-                await asyncio.to_thread(
-                    push.notificar,
-                    usuario,
-                    "Recibo de pago listo",
-                    "El recibo 490 ya está disponible en tu panel.",
-                )
-            except Exception as exc:  # noqa: BLE001
-                job["estado"] = "error"
-                job["error"] = f"{type(exc).__name__}: {exc}"
-                runner.emitir_done(f"Error: {exc}")
-                job["progreso"].append(f"Error: {exc}")
-                await asyncio.to_thread(
-                    push.notificar,
-                    usuario,
-                    "Recibo de pago fallido",
-                    f"No se pudo obtener el recibo: {exc}",
                 )
 
     asyncio.create_task(_ejecutar())
@@ -1086,8 +903,6 @@ def _lanzar_job_bot(chat_id: str, orden: dict) -> dict:
     job_dir.mkdir(parents=True, exist_ok=True)
     if orden["tipo"] == motor.ACCION_RUT:
         tipo_job = "rut"
-    elif orden["tipo"] == motor.ACCION_RECIBO:
-        tipo_job = "recibo"
     else:
         tipo_job = "xls"
     _jobs[job_id] = {
@@ -1116,16 +931,6 @@ def _lanzar_job_bot(chat_id: str, orden: dict) -> dict:
                         orden["tipo_documento"], orden["numero_documento"],
                         orden["contrasena"],
                     )
-                elif tipo_job == "recibo":
-                    final = await runner.descargar_recibo_pago(
-                        orden["tipo_documento"], orden["numero_documento"],
-                        orden["contrasena"],
-                        orden["anio"], orden["fecha_pago"],
-                    )
-                    job["resultado"] = {
-                        "anio": orden["anio"],
-                        "fecha_pago": orden["fecha_pago"],
-                    }
                 else:
                     final = await runner.consulta_individual(
                         orden["tipo_documento"], orden["numero_documento"],

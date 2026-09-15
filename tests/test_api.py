@@ -342,73 +342,8 @@ def test_consulta_expone_resultado_al_panel(client, db, admin, monkeypatch, tmp_
     assert data["resultado"]["topes"][0]["excede"] is False
 
 
-def test_recibo_validate_documento(client, db, admin):
-    cookie = _login(client, admin, "admin123").cookies.get("sesion")
-    # Sesión inválida: rechazado
-    r = client.post("/api/recibo", json={
-        "numero_documento": "12345678", "contrasena": "x",
-        "anio": "2025", "fecha_pago": "2026-09-30",
-    }, cookies={"sesion": "token-invalido"})
-    assert r.status_code == 401
-    c = {"sesion": cookie}
-    # Número no numérico
-    r = client.post("/api/recibo", json={
-        "tipo_documento": "Cédula de Ciudadanía",
-        "numero_documento": "ABC", "contrasena": "clave",
-        "anio": "2025", "fecha_pago": "2026-09-30",
-    }, cookies=c)
-    assert r.status_code == 400
-    # Año inválido
-    r = client.post("/api/recibo", json={
-        "tipo_documento": "Cédula de Ciudadanía",
-        "numero_documento": "12345678", "contrasena": "clave",
-        "anio": "2021", "fecha_pago": "2026-09-30",
-    }, cookies=c)
-    assert r.status_code == 400
-    # Fecha mal formada
-    r = client.post("/api/recibo", json={
-        "tipo_documento": "Cédula de Ciudadanía",
-        "numero_documento": "12345678", "contrasena": "clave",
-        "anio": "2025", "fecha_pago": "30/09/2026",
-    }, cookies=c)
-    assert r.status_code == 400
 
 
-def test_recibo_descarga_pdf_al_terminar(client, db, admin, monkeypatch, tmp_path):
-    """Un job de recibo termina 'done' y su descarga sirve el PDF del 490."""
-    from app import main as mainmod
-
-    class RunnerStubRecibo:
-        def __init__(self, job_dir, progreso=None):
-            pass
-
-        async def descargar_recibo_pago(self, tipo, numero, contrasena, anio, fecha_pago):
-            ruta = tmp_path / "ReciboRenta_2025_12345678_2026-09-30.pdf"
-            ruta.write_bytes(b"%PDF-1.4 fake recibo")
-            return ruta
-
-    monkeypatch.setattr(mainmod, "DianRunner", RunnerStubRecibo)
-    cookie = _login(client, admin, "admin123").cookies.get("sesion")
-
-    r = client.post("/api/recibo", json={
-        "tipo_documento": "Cédula de Ciudadanía",
-        "numero_documento": "12345678",
-        "contrasena": "secreta",
-        "anio": "2025",
-        "fecha_pago": "2026-09-30",
-    }, cookies={"sesion": cookie})
-    assert r.status_code == 200
-    job_id = r.json()["job_id"]
-
-    data = _esperar_job(client, {"sesion": cookie}, job_id)
-    assert data["estado"] == "done", data.get("error")
-    assert data["tipo"] == "recibo"
-    assert data["final"].endswith("ReciboRenta_2025_12345678_2026-09-30.pdf")
-
-    r = client.get("/api/job/" + job_id + "/descargar", cookies={"sesion": cookie})
-    assert r.status_code == 200
-    assert r.headers["content-type"] == "application/pdf"
-    assert r.content.startswith(b"%PDF")
 
 
 def _esperar_job(client, cookies, job_id):
