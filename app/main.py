@@ -155,6 +155,13 @@ class ReciboIn(BaseModel):
     fecha_pago: str
 
 
+class DeclaracionIn(BaseModel):
+    tipo_documento: str = "Cédula de Ciudadanía"
+    numero_documento: str
+    contrasena: str
+    anio: str
+
+
 class DecidirIn(BaseModel):
     usuario: str
     aprobar: bool
@@ -512,6 +519,85 @@ async def api_rut(body: ConsultaIn, sesion: str | None = Cookie(default=None)):
                     usuario,
                     "Copia del RUT fallida",
                     f"No se pudo obtener el RUT: {exc}",
+                )
+
+    asyncio.create_task(_ejecutar())
+    return {"job_id": job_id}
+
+
+@app.post("/api/declaracion")
+async def api_declaracion(body: DeclaracionIn, sesion: str | None = Cookie(default=None)):
+    """Descarga la declaración de renta (formulario 210, PDF) presentada.
+
+    Pide el año gravable de la declaración. Reusa las credenciales DIAN del
+    formulario del panel y ejecuta el flujo verificado: 210 -> Declaraciones de
+    renta presentadas -> fila del año -> botón "Descargar" de la fila (tooltip
+    "Descargar") -> PDF de la declaración 210 presentada.
+    """
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    usuario = s[0]
+
+    numero = body.numero_documento.strip()
+    if not numero or not body.contrasena:
+        raise HTTPException(status_code=400, detail="Cédula y contraseña son obligatorias.")
+    if not numero.isdigit():
+        raise HTTPException(status_code=400, detail="El número de cédula debe ser numérico.")
+    anio = body.anio.strip()
+    if anio not in ANIOS_RECIBO_RENTA:
+        raise HTTPException(
+            status_code=400,
+            detail="El año de la declaración debe ser uno de: "
+            + ", ".join(ANIOS_RECIBO_RENTA) + ".",
+        )
+
+    job_id = uuid.uuid4().hex
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    _jobs[job_id] = {
+        "estado": "queued",
+        "tipo": "declaracion",
+        "progreso": [],
+        "final": None,
+        "error": None,
+        "resultado": None,
+        "dir": job_dir,
+        "usuario": usuario,
+        "creado": time.time(),
+    }
+
+    async def _ejecutar():
+        async with _job_lock:
+            job = _jobs[job_id]
+            job["estado"] = "running"
+
+            def cb(msg: str, _done: bool):
+                job["progreso"].append(msg)
+
+            runner = DianRunner(job_dir=job_dir, progreso=cb)
+            try:
+                final = await runner.descargar_declaracion_renta(
+                    body.tipo_documento, numero, body.contrasena, anio,
+                )
+                job["estado"] = "done"
+                job["final"] = str(final)
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Declaración de renta lista",
+                    "La declaración 210 ya está disponible en tu panel.",
+                )
+            except Exception as exc:  # noqa: BLE001
+                job["estado"] = "error"
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                runner.emitir_done(f"Error: {exc}")
+                job["progreso"].append(f"Error: {exc}")
+                await asyncio.to_thread(
+                    push.notificar,
+                    usuario,
+                    "Descarga de declaración fallida",
+                    f"No se pudo obtener la declaración: {exc}",
                 )
 
     asyncio.create_task(_ejecutar())

@@ -51,6 +51,10 @@ TEXTO_DECLARACIONES_PRESENTADAS = "Declaraciones de renta presentadas"
 TEXTO_SI_YES = "SI/YES"
 TEXTO_GENERAR_RECIBO = "Generar recibo"
 TEXTO_DESCARGAR_RECIBO = "Descargar recibo de pago"
+# Tooltip del botón que descarga la declaración de renta presentada (210) en la
+# grilla "Declaraciones de renta presentadas". El botón está en la misma fila
+# que "Pagar", pero es el icono de descarga directa del PDF de la declaración.
+TEXTO_DESCARGAR_DECLARACION = "Descargar declaración de renta"
 # Formato visible de la columna "Año / frecuencia" en la tabla de declaraciones.
 ETIQUETA_AÑO_ANUAL = "anual"
 

@@ -587,6 +587,157 @@ class DianRunner:
             await browser.close()
             await p.stop()
 
+    async def descargar_declaracion_renta(
+        self,
+        tipo_documento: str,
+        numero_documento: str,
+        contrasena: str,
+        anio: str,
+    ) -> Path:
+        """Descarga la DECLARACIÓN de renta (formulario 210) presentada.
+
+        Flujo MUISCA verificado (mismo preámbulo que el recibo 490, pero la
+        fila NO se paga): login -> Diligenciar y presentar -> Formulario 210 ->
+        "Declaraciones de renta presentadas" -> fila del año gravable ->
+        botón "Descargar" de la fila (tooltip Descargar) -> PDF 210 del PDF
+        de la declaración presentada.
+
+        La diferencia con `descargar_recibo_pago`: aquí NO se usa el botón
+        "Pagar" ni la fecha de pago; se descarga directamente la declaración
+        presentada del año pedido (no el recibo 490).
+        """
+        if anio not in ANIOS_RECIBO_RENTA:
+            raise ValueError(
+                "El año de la declaración debe ser uno de: "
+                + ", ".join(ANIOS_RECIBO_RENTA) + "."
+            )
+
+        creds = {
+            "tipo_documento": tipo_documento,
+            "numero_documento": numero_documento,
+            "contrasena": contrasena,
+        }
+        self.loguear(
+            f"[info] Declaración de renta: {tipo_documento} {numero_documento} "
+            f"| renta {anio}"
+        )
+        self.emitir_done(
+            "Ingresando al portal DIAN "
+            f"({num_documento_mascarado(numero_documento)})..."
+        )
+
+        p, browser, context, page = await self._abrir_sesion(creds)
+        try:
+            self.emitir_done("Sesión iniciada. Abriendo formulario 210...")
+            await page.wait_for_timeout(2500)
+            await self._cerrar_modales_dian(page)
+
+            # 1) Abrir la SPA "Selector de formularios" desde el dashboard.
+            try:
+                await page.wait_for_selector(
+                    "#pre-bootstrap", state="hidden", timeout=30000
+                )
+            except Exception:
+                pass
+            ultimo_error = None
+            for intento in range(1, REINTENTOS + 1):
+                try:
+                    await page.locator(
+                        "input[id*='btnDiligenciarPresentar']"
+                    ).first.click(force=True, timeout=15000)
+                    break
+                except Exception as exc:
+                    ultimo_error = exc
+                    self.loguear(
+                        "  [info] Reintentando botón 'Diligenciar y presentar' "
+                        f"({intento}/{REINTENTOS})..."
+                    )
+                    await page.wait_for_timeout(3500)
+            else:
+                raise RuntimeError(
+                    "No se encontró el botón 'Diligenciar y presentar'. "
+                    f"({type(ultimo_error).__name__} si hubo error)"
+                ) from ultimo_error
+
+            await page.wait_for_selector(
+                "#pre-bootstrap", state="hidden", timeout=30000
+            )
+            try:
+                await page.get_by_text(
+                    TEXTO_FORMULARIO_RENTA, exact=False
+                ).first.click(timeout=20000)
+            except Exception as exc:
+                raise RuntimeError(
+                    "No se encontró el formulario 210 (renta personas naturales). "
+                    f"({type(exc).__name__})"
+                ) from exc
+            self.loguear("  [declaracion] Formulario 210 seleccionado")
+            await page.wait_for_timeout(4500)
+
+            # 2) Abrir "Declaraciones de renta presentadas".
+            try:
+                await page.get_by_text(
+                    TEXTO_DECLARACIONES_PRESENTADAS, exact=True
+                ).first.click(timeout=20000)
+            except Exception as exc:
+                raise RuntimeError(
+                    "No se encontró la opción 'Declaraciones de renta "
+                    f"presentadas'. ({type(exc).__name__})"
+                ) from exc
+            self.loguear("  [declaracion] Declaraciones de renta presentadas")
+            await page.wait_for_timeout(5000)
+
+            # 3) Botón "Descargar" de la fila del año de la declaración.
+            etiqueta_fila = f"{anio} / {ETIQUETA_AÑO_ANUAL}"
+            try:
+                fila = page.locator(
+                    "mat-row", has_text=etiqueta_fila
+                ).first
+                await fila.wait_for(timeout=15000)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"No se encontró una declaración de renta presentada para "
+                    f"el año {anio}. ({type(exc).__name__})"
+                ) from exc
+
+            # El botón de descarga está al final de la fila, con tooltip
+            # "Descargar" (como el de "Pagar" del recibo, mismo componente).
+            destino_pdf = (
+                self.download_dir
+                / f"DeclaracionRenta_{anio}_{numero_documento}.pdf"
+            )
+            try:
+                boton_descargar = page.locator(
+                    "button.buttonIconAccion "
+                    "img[matTooltip='" + TEXTO_DESCARGAR_DECLARACION + "']"
+                ).first
+                await boton_descargar.wait_for(timeout=15000)
+                await fila.locator("xpath=ancestor::mat-row").first
+                async with page.expect_download(
+                    timeout=TLIMIT_DESCARGA
+                ) as dl_info:
+                    await boton_descargar.click(force=True)
+                    descarga = await dl_info.value
+                await descarga.save_as(destino_pdf)
+                if not (destino_pdf.exists() and destino_pdf.stat().st_size > 0):
+                    raise RuntimeError("la descarga quedó vacía")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"No se pudo descargar la declaración de renta del año "
+                    f"{anio}: {type(exc).__name__}: {exc}"
+                ) from exc
+
+            self.loguear(f"  [declaracion] Declaración descargada: {destino_pdf}")
+            self.emitir_done(
+                "Declaración de renta del año "
+                f"{anio} descargada correctamente."
+            )
+            return destino_pdf
+        finally:
+            await context.close()
+            await browser.close()
+            await p.stop()
+
     async def descargar_recibo_pago(
         self,
         tipo_documento: str,
