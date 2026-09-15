@@ -660,12 +660,21 @@ class DianRunner:
                 ) from ultimo_error
 
             await page.wait_for_selector(
-                "#pre-bootstrap", state="hidden", timeout=30000
+                "#pre-bootstrap", state="hidden", timeout=45000
             )
+            # La SPA "WebDilGestorFormularios" (gestor de formularios) monta la
+            # grilla de formularios en lazy: el tile "Renta Personas Naturales"
+            # puede tardar más de 20 s en renderizar tras ocultarse el
+            # pre-bootstrap. Esperar el tile visible antes de clicar evita un
+            # TimeoutError falso (flujo declaración 210).
+            formulario_renta = page.get_by_text(
+                TEXTO_FORMULARIO_RENTA, exact=False
+            ).first
             try:
-                await page.get_by_text(
-                    TEXTO_FORMULARIO_RENTA, exact=False
-                ).first.click(timeout=20000)
+                await formulario_renta.wait_for(
+                    state="visible", timeout=45000
+                )
+                await formulario_renta.click(timeout=45000)
             except Exception as exc:
                 raise RuntimeError(
                     "No se encontró el formulario 210 (renta personas naturales). "
@@ -821,20 +830,25 @@ class DianRunner:
             ).first
             try:
                 await page.wait_for_selector(
-                    "#pre-bootstrap", state="hidden", timeout=20000
+                    "#pre-bootstrap", state="hidden", timeout=45000
                 )
             except Exception:
                 pass
+            # La SPA "WebDilGestorFormularios" monta la grilla en lazy: el tile
+            # "Renta Personas Naturales" puede tardar más de 20 s en renderizar
+            # tras ocultarse el pre-bootstrap. Esperar el tile visible antes de
+            # clicar evita un TimeoutError falso (flujo recibo 490, mismo tile
+            # que el flujo de declaración 210).
             try:
-                await formulario.wait_for(timeout=20000)
+                await formulario.wait_for(state="visible", timeout=45000)
             except Exception:
                 # Primer clic "perdido": reintenta abrir el selector.
                 await page.locator(
                     "input[id*='btnDiligenciarPresentar']"
-                ).first.click(force=True, timeout=10000)
+                ).first.click(force=True, timeout=15000)
                 await page.wait_for_timeout(4000)
-                await formulario.wait_for(timeout=20000)
-            await formulario.click()
+                await formulario.wait_for(state="visible", timeout=45000)
+            await formulario.click(timeout=45000)
             self.loguear("  [recibo] Formulario 210 seleccionado")
             await page.wait_for_timeout(4500)
 
