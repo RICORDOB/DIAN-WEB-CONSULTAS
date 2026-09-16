@@ -56,31 +56,9 @@
       <div class="botones-accion">
         <button type="button" class="boton" id="btnConsultar">Consulta ExoRenta</button>
         <button type="button" class="boton secundario" id="btnRut">Obtener copia del RUT</button>
-        <button type="button" class="boton secundario" id="btnDeclaracion">Descargar declaración de renta</button>
       </div>
     </form>
-
-    <div id="declaracionWizard" class="oculto">
-      <h3>Descarga de declaración de renta</h3>
-      <p class="subtitulo">La DIAN entrega la copia PDF de la declaración de renta
-        (formulario 210) que ya presentaste. Escribe el año gravable de la declaración.</p>
-      <div class="formulario">
-        <label for="declaracionAnio">Año gravable de la declaración</label>
-        <select id="declaracionAnio">
-          <option value="2022">2022</option>
-          <option value="2023">2023</option>
-          <option value="2024">2024</option>
-          <option value="2025">2025</option>
-        </select>
-
-        <div class="botones-accion">
-          <button type="button" class="boton" id="btnDeclaracionOk">Descargar declaración de renta</button>
-          <button type="button" class="boton secundario" id="btnDeclaracionCancelar">Cancelar</button>
-        </div>
-      </div>
-    </div>
-      </div>
-    </div>
+  </div>
 
     <div id="progresoBox" class="oculto">
       <h3>Progreso</h3>
@@ -112,12 +90,6 @@
             Presiona DESCARGAR para guardar el PDF.</p>
         </div>
 
-        <div class="resultado-declaracion oculto" id="resultadoDeclaracion">
-          <div class="resultado-titulo">&#10003; Declaración de renta descargada</div>
-          <p class="resultado-cabecera">La declaración de renta (formulario 210) que ya
-            presentaste fue descargada del portal DIAN. Presiona DESCARGAR para guardar el PDF.</p>
-        </div>
-
         <div class="resultado-veredicto verdict-no" id="resultadoVeredicto">
           <span class="resultado-icono" id="resultadoIcono">&#10003;</span>
           <div>
@@ -146,7 +118,6 @@
         </div>
       </div>
     </div>
-  </div>
 
   <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.<br />
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
