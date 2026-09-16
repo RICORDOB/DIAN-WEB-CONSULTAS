@@ -71,6 +71,53 @@ def test_motor_flujo_cliente_hasta_lanzar():
     assert lanzar["contrasena"] == "Gladys123*"  # descifrada en el momento
 
 
+def test_motor_flujo_recibo_hasta_lanzar():
+    _guardar_cliente()
+    chat = motor.nuevo_chat()
+    resp = motor.manejar_mensaje(chat, "31200506")
+    assert "recibo" in resp["acciones"]
+    estado = motor.estado(chat)
+    assert estado["estado"] == motor.ESPERA_OPCION
+    resp = motor.manejar_accion(chat, "recibo")
+    assert motor.estado(chat)["estado"] == motor.ESPERA_ANIO
+
+    resp = motor.manejar_mensaje(chat, "2025")
+    assert motor.estado(chat)["estado"] == motor.ESPERA_FECHA
+
+    resp = motor.manejar_mensaje(chat, "2026-09-30")
+    assert motor.estado(chat)["estado"] == motor.PROCESANDO
+    lanzar = resp["lanzar"]
+    assert lanzar["tipo"] == "recibo"
+    assert lanzar["anio"] == "2025"
+    assert lanzar["fecha_pago"] == "2026-09-30"
+    assert lanzar["numero_documento"] == "31200506"
+    assert lanzar["contrasena"] == "Gladys123*"
+
+
+def test_motor_recibo_valida_datos_del_wizard():
+    _guardar_cliente()
+    chat = motor.nuevo_chat()
+    motor.manejar_mensaje(chat, "31200506")
+    motor.manejar_accion(chat, "recibo")
+
+    # Año inválido
+    resp = motor.manejar_mensaje(chat, "25")
+    assert motor.estado(chat)["estado"] == motor.ESPERA_ANIO
+    assert "dígitos" in " ".join(resp["mensajes"]).lower()
+
+    # Fecha inválida
+    resp = motor.manejar_mensaje(chat, "2026")
+    assert motor.estado(chat)["estado"] == motor.ESPERA_FECHA
+    resp = motor.manejar_mensaje(chat, "30-09-2026")
+    assert motor.estado(chat)["estado"] == motor.ESPERA_FECHA
+    assert "formato" in " ".join(resp["mensajes"]).lower()
+
+    # Fecha válida completa el lanzamiento
+    resp = motor.manejar_mensaje(chat, "2026-09-30")
+    assert motor.estado(chat)["estado"] == motor.PROCESANDO
+    assert resp["lanzar"]["fecha_pago"] == "2026-09-30"
+
+
 def test_motor_no_cliente_reintentar():
     chat = motor.nuevo_chat()
     motor.manejar_mensaje(chat, "1111111111")

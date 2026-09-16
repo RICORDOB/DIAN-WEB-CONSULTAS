@@ -234,6 +234,7 @@ function iniciarPanel() {
   const btnImprimir = document.getElementById("btnImprimir");
   const btnConsultar = document.getElementById("btnConsultar");
   const btnRut = document.getElementById("btnRut");
+  const btnDeclaracion = document.getElementById("btnDeclaracion");
 
   let jobId = null;
   let pollTimer = null;
@@ -263,9 +264,19 @@ function iniciarPanel() {
     ["copia del rut obtenida", 95],
   ];
 
+  // Hitos de la descarga de la declaración de renta (formulario 210 presentada).
+  const HITOS_DECLARACION = [
+    ["login en muisca", 15],
+    ["sesión iniciada", 40],
+    ["declaraciones de renta presentadas", 65],
+    ["fila del año de la declaración", 80],
+    ["declaración descargada", 95],
+  ];
+
   function pctPorHitos(lineas) {
     const texto = (lineas.join("\n") || "").toLowerCase();
-    const hitos = tipoActual === "rut" ? HITOS_RUT : HITOS;
+    const hitos = tipoActual === "rut" ? HITOS_RUT
+      : (tipoActual === "declaracion" ? HITOS_DECLARACION : HITOS);
     let obj = 8;
     hitos.forEach((par) => {
       if (texto.includes(par[0])) obj = Math.max(obj, par[1]);
@@ -316,7 +327,7 @@ function iniciarPanel() {
   }
 
   function deshabilitarBotones(deshabilitar) {
-    [btnConsultar, btnRut].forEach(function (b) {
+    [btnConsultar, btnRut, btnDeclaracion].forEach(function (b) {
       if (b) b.disabled = deshabilitar;
     });
   }
@@ -364,6 +375,28 @@ function iniciarPanel() {
   btnConsultar.addEventListener("click", () => lanzar("consulta", "/api/consulta"));
   btnRut.addEventListener("click", () => lanzar("rut", "/api/rut"));
 
+  // Wizard guiado para el recibo de pago de declaración de renta (490)
+  const declaracionWizard = document.getElementById("declaracionWizard");
+  const declaracionAnio = document.getElementById("declaracionAnio");
+  const btnDeclaracionOk = document.getElementById("btnDeclaracionOk");
+  const btnDeclaracionCancelar = document.getElementById("btnDeclaracionCancelar");
+
+  btnDeclaracion.addEventListener("click", () => {
+    if (jobId) { mostrarMensaje(mensaje, "Ya hay una consulta en curso.", "info"); return; }
+    if (declaracionWizard) declaracionWizard.classList.remove("oculto");
+    if (mensaje) mensaje.classList.add("oculto");
+  });
+  if (btnDeclaracionCancelar) {
+    btnDeclaracionCancelar.addEventListener("click", () => declaracionWizard.classList.add("oculto"));
+  }
+  if (btnDeclaracionOk) {
+    btnDeclaracionOk.addEventListener("click", () => {
+      const anio = declaracionAnio ? declaracionAnio.value : "2024";
+      declaracionWizard.classList.add("oculto");
+      lanzar("declaracion", "/api/declaracion", { anio: anio });
+    });
+  }
+
   // Al presionar Enter en el formulario se lanza la consulta ExoRenta
   form.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -388,7 +421,8 @@ function iniciarPanel() {
           barraFill.classList.add("completo");
           estadoJob.textContent =
             data.tipo === "rut" ? "Copia del RUT obtenida."
-            : "Consulta completada.";
+            : (data.tipo === "declaracion" ? "Declaración de renta descargada."
+               : "Consulta completada.");
           finalizarJob(data);
         } else if (data.estado === "error") {
           clearInterval(pollTimer);
@@ -400,7 +434,8 @@ function iniciarPanel() {
         } else if (data.estado === "running") {
           estadoJob.textContent =
             tipoActual === "rut" ? "Obteniendo copia del RUT..."
-            : "Procesando consulta...";
+            : (tipoActual === "declaracion" ? "Descargando declaración de renta..."
+               : "Procesando consulta...");
           pctObjetivo = pctPorHitos(data.progreso);
           iniciarAnimacion();
         } else {
@@ -418,7 +453,8 @@ function iniciarPanel() {
     deshabilitarBotones(false);
 
     const esRut = data.tipo === "rut";
-    const esPdf = esRut;
+    const esDeclaracion = data.tipo === "declaracion";
+    const esPdf = esRut || esDeclaracion;
 
     // Elementos del veredicto de renta (solo aplican a la consulta ExoRenta)
     ["printEncabezado", "resultadoVeredicto", "resultadoCabecera",
@@ -428,12 +464,14 @@ function iniciarPanel() {
 
     const boxRut = document.getElementById("resultadoRut");
     if (boxRut) boxRut.classList.toggle("oculto", !esRut);
+    const boxDeclaracion = document.getElementById("resultadoDeclaracion");
+    if (boxDeclaracion) boxDeclaracion.classList.toggle("oculto", !esDeclaracion);
     if (btnImprimir) btnImprimir.classList.toggle("oculto", esPdf);
 
-    // El botón DESCARGAR apunta al PDF del RUT listo para guardarse
+    // El botón DESCARGAR apunta al PDF (RUT o recibo) listo para guardarse
     if (esPdf) {
       document.getElementById("printFecha").textContent = "";
-      mostrarMensaje(mensaje, "Copia del RUT obtenida.", "ok");
+      mostrarMensaje(mensaje, esRut ? "Copia del RUT obtenida." : "Recibo de pago obtenido.", "ok");
       return;
     }
 
