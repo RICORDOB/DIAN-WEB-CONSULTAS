@@ -39,6 +39,14 @@ ARGS_SERVIDOR = [
 # --single-process.
 ARGS_CHROMIUM_EXTRA = ["--single-process"]
 
+# Cloudflare Turnstile (el captcha de la DIAN) entrega el reto desde hosts
+# *.challenges.cloudflare.com; `brunhild` solo publica registros AAAA (IPv6)
+# y en redes sin IPv6 el reto no carga (ERR_NAME_NOT_RESOLVED). Esta regla
+# fija la IPv4 anycast equivalente; se usa solo en los flujos con captcha.
+ARG_DNS_TURNSTILE = (
+    "--host-resolver-rules=MAP brunhild.challenges.cloudflare.com 104.18.17.146"
+)
+
 # UA de Chrome estable: evita que los servidores reporten "HeadlessChrome".
 USER_AGENT_CHROME = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

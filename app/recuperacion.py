@@ -15,11 +15,16 @@ Pasos (evidencia .inspeccion_flujo/20261017_login_recuperacion, 02-08):
   5. éxito -> aparece "Iniciar sesión" (la DIAN regenera la firma electrónica)
 
 Requiere el navegador endurecido (app.navegador): sin él, el portal no habilita
-ni el primer botón "Continuar" (señal anti-bot, ver navegador.py).
+ni el primer botón "Continuar" (señal anti-bot, ver navegador.py). El primer
+paso exige además un captcha de Cloudflare (Turnstile) que solo una persona
+puede superar: en local se usa ``asistido=True`` (ventana visible, la persona
+resuelve el captcha y el resto sigue automático); en el servidor el flujo
+automático queda deshabilitado hasta rediseñar.
 """
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +33,7 @@ from playwright.async_api import async_playwright, expect
 
 from .comun import TIMEOUT_LOGIN
 from .navegador import (
+    ARG_DNS_TURNSTILE,
     ARGS_CHROMIUM_EXTRA,
     ARGS_SERVIDOR,
     USER_AGENT_CHROME,
@@ -35,10 +41,20 @@ from .navegador import (
     nuevo_contexto,
 )
 
-# Entrada del flujo de recuperación (llegó desde el login "¿Olvidó su contraseña?")
-URL_RECUPERACION = (
-    "https://muisca.dian.gov.co/WebIdentidadLogin/recuperar-cuenta/autenticacion"
+# Entrada del flujo: el SPA de identidad solo sirve /recuperar-cuenta al
+# navegar dentro de la app (el deep-link directo responde 404 del servidor).
+# Esta es la URL de acceso capturada en la evidencia (01_login.json); desde
+# ahí el enlace "¿Olvidó su contraseña?" abre el formulario de recuperación.
+URL_ENTRADA = (
+    "https://muisca.dian.gov.co/WebIdentidadLogin/?ideRequest="
+    "eyJjbGllbnRJZCI6IldvMGFLQWxCN3ZSUF8xNmZyUEkxeDlacGhCRWEiLCJyZWRpcmVjdF91cmki"
+    "OiJodHRwOi8vbXVpc2NhLmRpYW4uZ292LmNvL0lkZW50aWRhZFJlc3RfTG9naW5GaWx0cm8vYXBp"
+    "L3N0cy92MS9hdXRoL2NhbGxiYWNrP3JlZGlyZWN0X3VyaT1odHRwJTNBJTJGJTJGbXVpc2NhLmRp"
+    "YW4uZ292LmNvJTJGV2ViQXJxdWl0ZWN0dXJhJTJGRGVMb2dpbi5mYWNlcyIsInJlc3BvbnNlVHlw"
+    "ZSI6IiIsInNjb3BlIjoiIiwic3RhdGUiOiIiLCJub25jZSI6IiIsInBhcmFtcyI6eyJ0aXBvVXN1"
+    "YXJpbyI6Im11aXNjYSJ9fQ%3D"
 )
+_ENLACE_RECUPERACION = "a:has-text('¿Olvidó su contraseña?')"
 
 # Estados públicos del flujo (los consume la web)
 PASO_MENU = "menu"      # en /menu: falta pulsar "Enviar código"
@@ -79,6 +95,10 @@ class SesionRecuperacion:
     definir_clave(nueva, confirmación) -> cerrar(). Cualquier fallo lanza
     ErrorRecuperacion con mensaje apto para el usuario; el estado/URL queda a la
     vista en ``paso``/``mensaje`` para que la web lo muestre.
+
+    Con ``asistido=True`` (uso local) la ventana es visible y el captcha del
+    primer paso se espera a que la persona lo resuelva (ventana de
+    ``espera_humano_seg`` segundos, 12 min por defecto).
     """
 
     def __init__(
@@ -86,10 +106,14 @@ class SesionRecuperacion:
         tipo_documento: str,
         numero_documento: str,
         dir_trabajo: Optional[Path] = None,
+        asistido: bool = False,
+        espera_humano_seg: int = 720,
     ):
         self.tipo_documento = tipo_documento
         self.numero_documento = str(numero_documento).strip()
         self.dir_trabajo = Path(dir_trabajo) if dir_trabajo else None
+        self.asistido = asistido
+        self.espera_humano_seg = int(espera_humano_seg)
         self.paso = ""
         self.mensaje = ""
         self._p = None
@@ -104,8 +128,8 @@ class SesionRecuperacion:
         try:
             self._browser = await lanzar_navegador(
                 self._p,
-                headless=True,
-                args_servidor=ARGS_SERVIDOR,
+                headless=not self.asistido,
+                args_servidor=[*ARGS_SERVIDOR, ARG_DNS_TURNSTILE],
                 args_extra=ARGS_CHROMIUM_EXTRA,
             )
             self._context = await nuevo_contexto(
@@ -140,7 +164,17 @@ class SesionRecuperacion:
     # -- pasos -------------------------------------------------------------
     async def _paso_autenticacion(self) -> None:
         page = self.page
-        await page.goto(URL_RECUPERACION, wait_until="domcontentloaded", timeout=60_000)
+        try:
+            await page.goto(URL_ENTRADA, wait_until="domcontentloaded", timeout=60_000)
+            await page.click(_ENLACE_RECUPERACION, timeout=30_000)
+            await page.wait_for_selector(
+                "mat-select[name='tipoDocumento']", timeout=30_000
+            )
+        except PWTimeout as exc:
+            raise ErrorRecuperacion(
+                "No se pudo abrir la página de recuperación de la DIAN. "
+                "Inténtalo de nuevo en unos minutos."
+            ) from exc
 
         await page.click("mat-select[name='tipoDocumento']", timeout=TIMEOUT_LOGIN)
         await page.click(
@@ -148,48 +182,109 @@ class SesionRecuperacion:
             timeout=TIMEOUT_LOGIN,
         )
         documento = page.locator("input[name='numDocumento']")
-        await expect(documento).to_be_enabled(timeout=TIMEOUT_LOGIN)
-        await documento.fill(self.numero_documento)
+        try:
+            await expect(documento).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        except (PWTimeout, AssertionError) as exc:
+            raise ErrorRecuperacion(
+                "El portal DIAN no habilitó el campo del documento. "
+                "Inténtalo de nuevo en unos minutos."
+            ) from exc
+        # Tecleo real: la validación de Angular solo reacciona a pulsaciones
+        # individuales (con fill() el formulario queda inválido y el botón
+        # "Continuar" nunca se habilita).
+        await documento.click()
+        await documento.press_sequentially(self.numero_documento, delay=60)
+        await page.keyboard.press("Tab")
 
         continuar = page.locator(_BTN_CONTINUAR).first
         actualizar = page.locator(_BTN_ACTUALIZAR)
-        if not await actualizar.count():
-            # El primer "Continuar" valida el formulario; si el navegador está
-            # bloqueado por la DIAN nunca se habilita (señal anti-bot).
-            try:
-                await expect(continuar).to_be_enabled(timeout=30_000)
-            except PWTimeout as exc:
-                raise ErrorRecuperacion(
-                    "El portal DIAN no habilitó el formulario (posible bloqueo del "
-                    "navegador). Intenta de nuevo en unos minutos."
-                ) from exc
-            await continuar.click()
-            try:
-                await page.wait_for_url("**/recuperar-cuenta/menu*", timeout=10_000)
-            except PWTimeout:
-                pass  # "Continuar" solo validó: el submit real es el otro botón
+        if self.asistido:
+            # El captcha de Cloudflare (Turnstile) bloquea a los bots: con la
+            # ventana a la vista la persona lo resuelve y aquí se espera.
+            await self._esperar_avance_humano()
+        else:
+            if not await actualizar.count():
+                # El primer "Continuar" valida el formulario; si el navegador
+                # está bloqueado por la DIAN nunca se habilita (señal anti-bot).
+                try:
+                    await expect(continuar).to_be_enabled(timeout=30_000)
+                except (PWTimeout, AssertionError) as exc:
+                    raise ErrorRecuperacion(
+                        "El portal DIAN no habilitó el formulario (posible bloqueo "
+                        "del navegador). Intenta de nuevo en unos minutos."
+                    ) from exc
+                await continuar.click()
+                try:
+                    await page.wait_for_url(
+                        "**/recuperar-cuenta/menu*", timeout=10_000
+                    )
+                except PWTimeout:
+                    pass  # "Continuar" solo validó: el submit real es el otro botón
 
-        if "/recuperar-cuenta/menu" not in page.url:
-            try:
-                await expect(actualizar).to_be_enabled(timeout=30_000)
-            except PWTimeout as exc:
-                raise ErrorRecuperacion(
-                    "El portal DIAN no habilitó el formulario (posible bloqueo del "
-                    "navegador). Intenta de nuevo en unos minutos."
-                ) from exc
-            await actualizar.click()
-            try:
-                await page.wait_for_url("**/recuperar-cuenta/menu*", timeout=60_000)
-            except PWTimeout as exc:
-                raise ErrorRecuperacion(
-                    "La DIAN no avanzó a la pantalla de código; verifica el tipo y "
-                    "número de documento e inténtalo de nuevo."
-                ) from exc
+            if "/recuperar-cuenta/menu" not in page.url:
+                try:
+                    await expect(actualizar).to_be_enabled(timeout=30_000)
+                except (PWTimeout, AssertionError) as exc:
+                    raise ErrorRecuperacion(
+                        "El portal DIAN no habilitó el formulario (posible bloqueo "
+                        "del navegador). Intenta de nuevo en unos minutos."
+                    ) from exc
+                await actualizar.click()
+                try:
+                    await page.wait_for_url(
+                        "**/recuperar-cuenta/menu*", timeout=60_000
+                    )
+                except PWTimeout as exc:
+                    raise ErrorRecuperacion(
+                        "La DIAN no avanzó a la pantalla de código; verifica el tipo "
+                        "y número de documento e inténtalo de nuevo."
+                    ) from exc
 
         self.paso = PASO_MENU
         self.mensaje = (
             "Documento validado. Pulsa «Enviar código»: la DIAN enviará el código "
             "al correo o celular registrado."
+        )
+
+    async def _esperar_avance_humano(self) -> None:
+        """Modo asistido: espera a que la persona supere el captcha de la DIAN.
+
+        Cloudflare Turnstile está diseñado para bloquear bots (en headless el
+        reto nunca entrega token), así que con la ventana a la vista la persona
+        lo resuelve en segundos. Aquí se detecta el avance por la URL y se pulsa
+        «Continuar» o el botón del aviso de firma en cuanto se habiliten.
+        """
+        page = self.page
+        self.mensaje = (
+            "Resuelve el captcha en la ventana y el proceso continuará solo."
+        )
+        errores = (
+            "No encontramos sus datos",
+            "No hemos encontrado datos de contacto",
+            "Su cuenta está deshabilitada",
+        )
+        limite = time.monotonic() + max(30, self.espera_humano_seg)
+        while time.monotonic() < limite:
+            if "/recuperar-cuenta/menu" in page.url:
+                return
+            for texto in errores:
+                if await page.locator(f"text={texto}").count():
+                    raise ErrorRecuperacion(
+                        f"La DIAN respondió: «{texto}». Revisa el tipo y número de "
+                        "documento."
+                    )
+            for selector in (_BTN_ACTUALIZAR, _BTN_CONTINUAR):
+                boton = page.locator(selector).first
+                try:
+                    if await boton.count() and await boton.is_enabled():
+                        await boton.click(timeout=2000)
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+            await page.wait_for_timeout(1000)
+        alerta = await self._texto_alerta()
+        raise ErrorRecuperacion(
+            alerta or "No se detectó el avance tras el captcha; inténtalo de nuevo."
         )
 
     async def enviar_codigo(self) -> None:
@@ -229,9 +324,18 @@ class SesionRecuperacion:
             raise ErrorRecuperacion("La sesión no está esperando un código.")
         page = self.page
         campo = page.locator("input[name='numDocumento'][placeholder*='recibido']")
-        await campo.fill(codigo.strip())
+        # Tecleo real (ver _paso_autenticacion): fill() no dispara la validación.
+        await campo.click()
+        await campo.press_sequentially(codigo.strip(), delay=40)
+        await page.keyboard.press("Tab")
         continuar = page.locator(_BTN_CONTINUAR).first
-        await expect(continuar).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        try:
+            await expect(continuar).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        except (PWTimeout, AssertionError) as exc:
+            raise ErrorRecuperacion(
+                "El portal DIAN no habilitó el botón para validar el código; "
+                "espera unos segundos e inténtalo de nuevo."
+            ) from exc
         await continuar.click()
 
         try:
@@ -255,11 +359,30 @@ class SesionRecuperacion:
         page = self.page
         campo1 = page.locator("input[name='password']")
         campo2 = page.locator("input[name='passwordConfirmacion']")
-        await campo1.fill(contrasena)
-        await expect(campo2).to_be_enabled(timeout=TIMEOUT_LOGIN)
-        await campo2.fill(confirmacion)
+        # Tecleo real (ver _paso_autenticacion): fill() no dispara la validación.
+        await campo1.click()
+        await campo1.press_sequentially(contrasena, delay=30)
+        try:
+            await expect(campo2).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        except (PWTimeout, AssertionError) as exc:
+            alerta = await self._texto_alerta()
+            raise ErrorRecuperacion(
+                alerta
+                or "La DIAN no aceptó la nueva contraseña (revisa los requisitos "
+                "que muestra la página)."
+            ) from exc
+        await campo2.click()
+        await campo2.press_sequentially(confirmacion, delay=30)
+        await page.keyboard.press("Tab")
         boton = page.locator(_BTN_CLAVE_FINAL)
-        await expect(boton).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        try:
+            await expect(boton).to_be_enabled(timeout=TIMEOUT_LOGIN)
+        except (PWTimeout, AssertionError) as exc:
+            alerta = await self._texto_alerta()
+            raise ErrorRecuperacion(
+                alerta
+                or "La DIAN no habilitó el botón de guardar; revisa la contraseña."
+            ) from exc
         await boton.click()
 
         try:
