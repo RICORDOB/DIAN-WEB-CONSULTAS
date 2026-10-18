@@ -1,8 +1,8 @@
 /* Service worker ExoRenta: caché controlada de estáticos + push notifications. */
-const CACHE = "exorenta-v3";
+const CACHE = "exorenta-v4";
 const ASSETS = [
   "/",
-"/assets/styles.css?v=20260911r5",
+"/assets/styles.css?v=20261018r1",
   "/assets/app.js?v=20260911r5",
 ];
 

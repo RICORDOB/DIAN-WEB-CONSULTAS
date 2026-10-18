@@ -150,7 +150,7 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0c1f3f; }
 .mensaje.error { background: #ffebee; color: #b71c1c; }
 .mensaje.ok { background: #e8f5e9; color: #1b5e20; }
 .mensaje.info { background: #ecfdf5; color: #065f46; }
-.oculto { display: none; }
+.oculto { display: none !important; }
 
 .estado { font-weight: 600; color: #059669; margin: 4px 0; }
 .log {
