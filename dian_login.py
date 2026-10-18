@@ -50,6 +50,7 @@ from app.comun import (
     URL_LOGIN,
     UVT_2025,
 )
+from app.navegador import lanzar_navegador, nuevo_contexto
 
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN
@@ -670,13 +671,14 @@ async def main(headless: bool, inspeccionar: bool, individual: bool = False):
     finales = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
+        browser = await lanzar_navegador(
+            p,
             headless=headless,
             slow_mo=500 if not headless else 0,
         )
 
         if inspeccionar:
-            context = await browser.new_context(accept_downloads=True, locale="es-CO")
+            context = await nuevo_contexto(browser)
             page = await context.new_page()
             await page.goto(URL_LOGIN, wait_until="networkidle")
             html = await page.content()
@@ -690,7 +692,7 @@ async def main(headless: bool, inspeccionar: bool, individual: bool = False):
         drive_service = None
         for i, creds in enumerate(credenciales, start=1):
             loguear(f"\n[{i}/{len(credenciales)}] Login: {creds['tipo_documento']} {creds['numero_documento']}")
-            context = await browser.new_context(accept_downloads=True, locale="es-CO")
+            context = await nuevo_contexto(browser)
             page = await context.new_page()
             estado_final = None
             try:

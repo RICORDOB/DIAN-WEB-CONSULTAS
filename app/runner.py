@@ -45,6 +45,13 @@ from .comun import (
     URL_LOGIN,
     UVT_2025,
 )
+from .navegador import (
+    ARGS_CHROMIUM_EXTRA,
+    ARGS_SERVIDOR,
+    USER_AGENT_CHROME,
+    lanzar_navegador,
+    nuevo_contexto,
+)
 
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN
@@ -452,23 +459,21 @@ class DianRunner:
         return final
 
     async def _abrir_sesion(self, creds: dict):
-        """Lanza Chromium headless y hace login en MUISCA.
+        """Lanza el navegador endurecido (Chrome real si existe; Chromium de
+        Playwright en contenedores) y hace login en MUISCA.
 
         Devuelve (playwright, browser, context, page). En caso de login fallido
         lanza RuntimeError con un mensaje legible y limpia los recursos.
         """
         self.loguear(f"  [Paso 1/4] Login en MUISCA...")
         p = await async_playwright().start()
-        browser = await p.chromium.launch(
+        browser = await lanzar_navegador(
+            p,
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-            ],
+            args_servidor=ARGS_SERVIDOR,
+            args_extra=ARGS_CHROMIUM_EXTRA,
         )
-        context = await browser.new_context(accept_downloads=True, locale="es-CO")
+        context = await nuevo_contexto(browser, user_agent=USER_AGENT_CHROME)
         page = await context.new_page()
         try:
             estado_login = await self._intentar_login(page, creds)
