@@ -1054,6 +1054,8 @@ function iniciarRecuperacion() {
   const docCliente = document.getElementById("recDocCliente");
   const esperaTexto = document.getElementById("recEsperaTexto");
   const menuTexto = document.getElementById("recMenuTexto");
+  const mediosBox = document.getElementById("recMedios");
+  const mediosLista = document.getElementById("recMediosLista");
   const errorTexto = document.getElementById("recErrorTexto");
   const exitoTexto = document.getElementById("recExitoTexto");
   const pie = document.getElementById("recPie");
@@ -1095,15 +1097,41 @@ function iniciarRecuperacion() {
     recId = null;
     modal.classList.add("oculto");
     form.reset();
+    mediosLista.innerHTML = "";
+    mediosBox.classList.add("oculto");
     document.getElementById("recCodigo").value = "";
     document.getElementById("recClave").value = "";
     document.getElementById("recClave2").value = "";
     avisar("");
   }
 
+  function dibujarMedios(medios) {
+    // Selector de destino del código (correo/celular) que reporta la DIAN.
+    const marcado = document.querySelector('input[name="recMedio"]:checked');
+    const previo = marcado ? marcado.value : "";
+    mediosLista.innerHTML = "";
+    if (!medios || !medios.length) {
+      mediosBox.classList.add("oculto");
+      return;
+    }
+    medios.forEach(function (m, indice) {
+      const etiqueta = document.createElement("label");
+      etiqueta.className = "rec-check";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "recMedio";
+      radio.value = m.tipo;
+      if (m.tipo === previo || (!previo && indice === 0)) radio.checked = true;
+      etiqueta.appendChild(radio);
+      etiqueta.appendChild(document.createTextNode(" " + (m.etiqueta || m.tipo)));
+      mediosLista.appendChild(etiqueta);
+    });
+    mediosBox.classList.remove("oculto");
+  }
+
   function aplicarEstado(data) {
     if (data.estado === "queued" || data.estado === "running") {
-      esperaTexto.textContent = data.mensaje || "Abriendo el portal de la DIAN…";
+      esperaTexto.textContent = data.mensaje || "Verificando el documento en la DIAN…";
       mostrarPaso("recPasoEspera");
       return;
     }
@@ -1124,6 +1152,7 @@ function iniciarRecuperacion() {
     avisar(data.error || "");
     if (data.paso === "menu") {
       menuTexto.textContent = data.mensaje || "";
+      dibujarMedios(data.medios || []);
       mostrarPaso("recPasoMenu");
     } else if (data.paso === "codigo") {
       mostrarPaso("recPasoCodigo");
@@ -1211,7 +1240,7 @@ function iniciarRecuperacion() {
         recId = data.rec_id;
         docCliente.textContent = tipo + " " + numero;
         avisar("");
-        esperaTexto.textContent = "Abriendo el portal de la DIAN…";
+        esperaTexto.textContent = "Verificando el documento en la DIAN…";
         mostrarPaso("recPasoEspera");
         modal.classList.remove("oculto");
         pararPoll();
@@ -1222,7 +1251,8 @@ function iniciarRecuperacion() {
   });
 
   document.getElementById("btnRecEnviar").addEventListener("click", () => {
-    enviarPaso("enviar_codigo");
+    const elegido = document.querySelector('input[name="recMedio"]:checked');
+    enviarPaso("enviar_codigo", elegido ? { medio: elegido.value } : {});
   });
   document.getElementById("btnRecReenviar").addEventListener("click", () => {
     enviarPaso("reenviar");

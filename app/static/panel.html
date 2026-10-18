@@ -60,8 +60,7 @@
     </form>
   </div>
 
-  <!-- Oculto: el flujo pasa a modo asistido local (captcha humano) en curso. -->
-  <div class="card panel-ancho oculto">
+  <div class="card panel-ancho">
     <h1>Credenciales DIAN</h1>
     <p class="subtitulo">¿La contraseña del cliente falla o está vencida? Restablécele una nueva de forma guiada. La DIAN enviará un código al correo o celular registrado por el cliente.</p>
 
@@ -153,12 +152,16 @@
       <div id="recAviso" class="mensaje oculto"></div>
 
       <div id="recPasoEspera">
-        <p class="rec-espera"><span class="rec-spinner"></span><span id="recEsperaTexto">Abriendo el portal de la DIAN…</span></p>
-        <p class="subtitulo">El portal de la DIAN puede tardar hasta un par de minutos en abrir la primera vez. No cierres esta ventana.</p>
+        <p class="rec-espera"><span class="rec-spinner"></span><span id="recEsperaTexto">Verificando el documento en la DIAN…</span></p>
+        <p class="subtitulo">La consulta puede tardar unos segundos. No cierres esta ventana.</p>
       </div>
 
       <div id="recPasoMenu" class="oculto">
         <p id="recMenuTexto"></p>
+        <div id="recMedios" class="oculto">
+          <label>¿A dónde enviar el código?</label>
+          <div id="recMediosLista"></div>
+        </div>
         <div class="modal-acciones">
           <button type="button" class="boton" id="btnRecEnviar">Enviar código</button>
         </div>
@@ -210,6 +213,6 @@
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-<script src="/assets/app.js?v=20261017r1"></script>
+<script src="/assets/app.js?v=20261018r2"></script>
 </body>
 </html>

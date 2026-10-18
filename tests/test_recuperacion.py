@@ -1,7 +1,8 @@
 """Tests del flujo guiado de recuperación de contraseña DIAN.
 
-El navegador real se sustituye por ``StubRecuperacion`` (mismo contrato que
-``SesionRecuperacion``) para probar sin Playwright.
+El cliente DIAN se sustituye por ``StubRecuperacion`` (mismo contrato que
+``SesionRecuperacionAPI``) para probar sin red. Igual que en el portal real, el
+código OTP se valida recién al cambiar la clave: al escribirlo solo se guarda.
 """
 
 import time
@@ -31,10 +32,14 @@ def client():
 
 
 class StubRecuperacion:
-    """Sustituto de SesionRecuperacion: sin navegador, estado en memoria."""
+    """Sustituto de SesionRecuperacionAPI: sin red, estado en memoria."""
 
     fallar_iniciar = False
     codigo_valido = "123456"
+    medios_fijos = [
+        {"tipo": "email", "etiqueta": "Correo: ric***@dominio.com"},
+        {"tipo": "tel1", "etiqueta": "Celular: ******33"},
+    ]
     instancias: list["StubRecuperacion"] = []
 
     def __init__(self, tipo_documento, numero_documento, dir_trabajo=None):
@@ -43,18 +48,22 @@ class StubRecuperacion:
         self.dir_trabajo = dir_trabajo
         self.paso = ""
         self.mensaje = ""
+        self.medios_ui = [dict(m) for m in StubRecuperacion.medios_fijos]
+        self.medio = None
+        self.codigo = None
         self.cerrada = False
         StubRecuperacion.instancias.append(self)
 
     async def iniciar(self):
         if StubRecuperacion.fallar_iniciar:
-            # La clase real se cierra a sí misma antes de elevar el error.
+            # La clase real también falla antes de quedar utilizable.
             await self.cerrar()
-            raise ErrorRecuperacion("No se pudo abrir el portal (stub).")
+            raise ErrorRecuperacion("No se pudo validar el documento (stub).")
         self.paso = "menu"
         self.mensaje = "Documento validado (stub)."
 
-    async def enviar_codigo(self):
+    async def enviar_codigo(self, medio=None):
+        self.medio = medio or (self.medios_ui[0]["tipo"] if self.medios_ui else None)
         self.paso = "codigo"
         self.mensaje = "Código enviado (stub)."
 
@@ -62,12 +71,16 @@ class StubRecuperacion:
         self.mensaje = "Código reenviado (stub)."
 
     async def aplicar_codigo(self, codigo):
-        if codigo != StubRecuperacion.codigo_valido:
-            raise ErrorRecuperacion("El código no es válido (stub).")
+        # La DIAN valida el código al cambiar la clave (contrato de la versión API).
+        self.codigo = codigo
         self.paso = "clave"
-        self.mensaje = "Código aceptado (stub)."
+        self.mensaje = "Código recibido (stub)."
 
     async def definir_clave(self, contrasena, confirmacion):
+        if self.codigo != StubRecuperacion.codigo_valido:
+            self.paso = "codigo"
+            self.mensaje = "La DIAN no aceptó el código (stub)."
+            raise ErrorRecuperacion(self.mensaje)
         self.paso = "exito"
         self.mensaje = "Contraseña actualizada (stub)."
 
@@ -79,8 +92,9 @@ class StubRecuperacion:
 def stub(monkeypatch):
     StubRecuperacion.instancias = []
     StubRecuperacion.fallar_iniciar = False
-    monkeypatch.setattr(main_mod, "SesionRecuperacion", StubRecuperacion)
-    # En producción el endpoint está apagado (RECUPERACION_WEB_ACTIVA=False);
+    monkeypatch.setattr(main_mod, "SesionRecuperacionAPI", StubRecuperacion)
+    monkeypatch.setattr(main_mod, "MODO_RECUPERACION", "api")
+    # En producción el endpoint puede apagarse con RECUPERACION_WEB_ACTIVA=False;
     # estos tests ejercitan el flujo completo, así que se enciende.
     monkeypatch.setattr(main_mod, "RECUPERACION_WEB_ACTIVA", True)
     return StubRecuperacion
@@ -134,10 +148,14 @@ def test_flujo_completo_actualiza_catalogo(client, db, admin, stub):
 
     datos = _esperar_estado(client, rec_id, cookie, "activo")
     assert datos["paso"] == "menu" and datos["error"] is None
+    # El panel recibe los medios enmascarados para elegir el destino del código.
+    assert [m["tipo"] for m in datos["medios"]] == ["email", "tel1"]
 
     r = client.post(f"/api/recuperacion/{rec_id}/paso",
-                    json={"accion": "enviar_codigo"}, cookies={"sesion": cookie})
+                    json={"accion": "enviar_codigo", "medio": "tel1"},
+                    cookies={"sesion": cookie})
     assert r.status_code == 200 and r.json()["paso"] == "codigo"
+    assert stub.instancias[-1].medio == "tel1"
 
     r = client.post(f"/api/recuperacion/{rec_id}/paso",
                     json={"accion": "codigo", "codigo": "123456"},
@@ -200,7 +218,8 @@ def test_cancelar_cierra_la_sesion(client, db, admin, stub):
     assert r.status_code == 409
 
 
-def test_codigo_invalido_no_rompe_la_sesion(client, db, admin, stub):
+def test_codigo_invalido_devuelve_al_paso_codigo(client, db, admin, stub):
+    """La DIAN valida el OTP al cambiar la clave: un código malo regresa al paso."""
     cookie = _preparar_usuario(client, admin)
     rec_id = _iniciar(client, cookie).json()["rec_id"]
     _esperar_estado(client, rec_id, cookie, "activo")
@@ -210,14 +229,39 @@ def test_codigo_invalido_no_rompe_la_sesion(client, db, admin, stub):
     r = client.post(f"/api/recuperacion/{rec_id}/paso",
                     json={"accion": "codigo", "codigo": "000000"},
                     cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["paso"] == "clave"
+
+    r = client.post(f"/api/recuperacion/{rec_id}/paso",
+                    json={"accion": "clave", "contrasena": "nuevaClave9",
+                          "confirmacion": "nuevaClave9"},
+                    cookies={"sesion": cookie})
     assert r.status_code == 200
     datos = r.json()
-    assert datos["estado"] == "activo" and "válido" in datos["error"]
+    assert datos["estado"] == "activo" and datos["paso"] == "codigo"
+    assert "código" in datos["error"]
 
     r = client.post(f"/api/recuperacion/{rec_id}/paso",
                     json={"accion": "codigo", "codigo": "123456"},
                     cookies={"sesion": cookie})
     assert r.status_code == 200 and r.json()["paso"] == "clave"
+
+    r = client.post(f"/api/recuperacion/{rec_id}/paso",
+                    json={"accion": "clave", "contrasena": "nuevaClave9",
+                          "confirmacion": "nuevaClave9"},
+                    cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["estado"] == "exito"
+
+
+def test_enviar_codigo_sin_medio_usa_el_primero(client, db, admin, stub):
+    """Compatibilidad: sin selección explícita, la DIAN va al primer medio (correo)."""
+    cookie = _preparar_usuario(client, admin)
+    rec_id = _iniciar(client, cookie).json()["rec_id"]
+    _esperar_estado(client, rec_id, cookie, "activo")
+
+    r = client.post(f"/api/recuperacion/{rec_id}/paso",
+                    json={"accion": "enviar_codigo"}, cookies={"sesion": cookie})
+    assert r.status_code == 200 and r.json()["paso"] == "codigo"
+    assert stub.instancias[-1].medio == "email"
 
 
 def test_validaciones_de_clave(client, db, admin, stub):
@@ -248,7 +292,7 @@ def test_error_al_iniciar_expone_mensaje(client, db, admin, stub):
     rec_id = _iniciar(client, cookie).json()["rec_id"]
 
     datos = _esperar_estado(client, rec_id, cookie, "error")
-    assert "portal" in datos["mensaje"]
+    assert "documento" in datos["mensaje"]
     assert stub.instancias[-1].cerrada is True
 
 

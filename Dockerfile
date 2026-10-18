@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiamos el código de la app
 COPY app ./app
+# El flujo de recuperación por API reutiliza el cliente de herramientas/
+# (herramientas/recuperar_dian_api.py + herramientas/comun.py, sin navegador).
+COPY herramientas ./herramientas
 
 # Usuario no root (seguridad): contenido ya instalado.
 ENV APP_DATA_DIR=/data \

@@ -280,7 +280,10 @@ def flujo(
         print("Cancelado: no se cambió nada.")
         return 0
 
-    resultado = cliente.cambiar_clave(tipo, numero, nueva, codigo, medio, generar_firma)
+    # La DIAN regenera la firma electrónica al recuperar la clave cuando el
+    # usuario la tiene (igual que el botón del portal); --generar-firma la fuerza.
+    regenerar_firma = generar_firma or bool(datos.get("tieneFirmaElectronica"))
+    resultado = cliente.cambiar_clave(tipo, numero, nueva, codigo, medio, regenerar_firma)
     print("\nLISTO: " + (resultado.get("mensaje") or "contraseña actualizada en la DIAN."))
     print("Guárdala en el panel («Agregar / actualizar cliente») para dejarla cifrada.")
     return 0

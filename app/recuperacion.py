@@ -287,8 +287,12 @@ class SesionRecuperacion:
             alerta or "No se detectó el avance tras el captcha; inténtalo de nuevo."
         )
 
-    async def enviar_codigo(self) -> None:
-        """Pulsa «Enviar código» en /recuperar-cuenta/menu."""
+    async def enviar_codigo(self, medio: Optional[str] = None) -> None:
+        """Pulsa «Enviar código» en /recuperar-cuenta/menu.
+
+        ``medio`` se acepta por compatibilidad de interfaz con la versión API
+        (que sí elige entre correo/celular); el portal no lo necesita.
+        """
         if self.paso != PASO_MENU:
             raise ErrorRecuperacion("La sesión no está lista para enviar el código.")
         try:

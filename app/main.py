@@ -61,6 +61,7 @@ from . import db
 from . import push
 from .bot import cifrado, motor, tokens as bot_tokens
 from .recuperacion import PASO_EXITO, ErrorRecuperacion, SesionRecuperacion
+from .recuperacion_api import SesionRecuperacionAPI
 from .runner import DianRunner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -177,6 +178,7 @@ class RecuperacionIn(BaseModel):
 
 class RecuperacionPasoIn(BaseModel):
     accion: str  # enviar_codigo | reenviar | codigo | clave
+    medio: Optional[str] = None  # tipo de medio DIAN elegido (email | tel1 | …)
     codigo: Optional[str] = None
     contrasena: Optional[str] = None
     confirmacion: Optional[str] = None
@@ -568,14 +570,24 @@ async def api_descargar(job_id: str, sesion: str | None = Cookie(default=None)):
 # verificación lo recibe el cliente (correo/celular) y lo teclea una persona.
 TTL_RECUPERACION = 10 * 60  # segundos de inactividad antes de expirar
 
-# La recuperación desde la web queda deshabilitada hasta rediseñarla: la DIAN
-# protegió el primer paso con un captcha de Cloudflare que la automatización en
-# el servidor no puede superar (ver app/recuperacion.py). Mientras esté en
-# False, /api/recuperacion/iniciar responde 503 y el restablecimiento se hace
-# en local con herramientas/recuperar_dian.py.
-RECUPERACION_WEB_ACTIVA = False
+# Desde 2026-10-18 el flujo usa la API oficial de la DIAN (recuperacion_api.py):
+# el captcha del portal es un control de la interfaz que no viaja en ninguna
+# petición, así que no se necesita navegador ni resolución manual del captcha.
+# Con MODO_RECUPERACION="navegador" queda disponible el flujo Playwright legado
+# como respaldo ante cualquier endurecimiento de la API.
+MODO_RECUPERACION = "api"  # "api" (REST oficial) | "navegador" (Playwright, respaldo)
+RECUPERACION_WEB_ACTIVA = True
 
 _recuperaciones: dict[str, dict] = {}
+
+
+def _crear_sesion_recuperacion(
+    tipo_documento: str, numero_documento: str, rec_dir: Path
+) -> SesionRecuperacion | SesionRecuperacionAPI:
+    """Sesión del flujo según el modo (API oficial por defecto)."""
+    if MODO_RECUPERACION == "navegador":
+        return SesionRecuperacion(tipo_documento, numero_documento, dir_trabajo=rec_dir)
+    return SesionRecuperacionAPI(tipo_documento, numero_documento, dir_trabajo=rec_dir)
 
 
 async def _cerrar_recuperacion(rec_id: str, estado: str, mensaje: str = "") -> None:
@@ -591,7 +603,9 @@ async def _cerrar_recuperacion(rec_id: str, estado: str, mensaje: str = "") -> N
         await sesion_rec.cerrar()
 
 
-async def _cerrar_sesion_segura(sesion_rec: SesionRecuperacion) -> None:
+async def _cerrar_sesion_segura(
+    sesion_rec: SesionRecuperacion | SesionRecuperacionAPI,
+) -> None:
     try:
         await sesion_rec.cerrar()
     except Exception:  # noqa: BLE001
@@ -672,43 +686,56 @@ async def api_recuperacion_iniciar(
 
     rec_id = uuid.uuid4().hex
     rec_dir = JOBS_DIR / f"rec_{rec_id}"
+    mensaje_inicial = (
+        "Abriendo el portal de la DIAN…"
+        if MODO_RECUPERACION == "navegador"
+        else "Verificando el documento en la DIAN…"
+    )
     _recuperaciones[rec_id] = {
         "usuario": usuario,
         "tipo_documento": body.tipo_documento,
         "numero_documento": numero,
         "estado": "queued",
         "paso": "",
-        "mensaje": "Abriendo el portal de la DIAN…",
+        "mensaje": mensaje_inicial,
         "error": None,
+        "medios": [],
         "sesion": None,
         "dir": rec_dir,
         "creado": time.time(),
         "ultimo_uso": time.time(),
     }
 
+    async def _abrir_una() -> None:
+        rec = _recuperaciones.get(rec_id)
+        if not rec or rec["estado"] == "cancelado":
+            return
+        rec["estado"] = "running"
+        try:
+            sesion_rec = _crear_sesion_recuperacion(
+                body.tipo_documento, numero, rec_dir
+            )
+            await sesion_rec.iniciar()
+            rec["sesion"] = sesion_rec
+            rec["paso"] = sesion_rec.paso
+            rec["mensaje"] = sesion_rec.mensaje
+            rec["medios"] = list(getattr(sesion_rec, "medios_ui", []) or [])
+            rec["estado"] = "activo"
+        except ErrorRecuperacion as exc:
+            rec["estado"] = "error"
+            rec["error"] = str(exc)
+            rec["mensaje"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            rec["estado"] = "error"
+            rec["error"] = f"No se pudo iniciar el flujo: {type(exc).__name__}"
+            rec["mensaje"] = rec["error"]
+
     async def _abrir():
-        async with _job_lock:  # un navegador a la vez (economía de RAM)
-            rec = _recuperaciones.get(rec_id)
-            if not rec or rec["estado"] == "cancelado":
-                return
-            rec["estado"] = "running"
-            try:
-                sesion_rec = SesionRecuperacion(
-                    body.tipo_documento, numero, dir_trabajo=rec_dir
-                )
-                await sesion_rec.iniciar()
-                rec["sesion"] = sesion_rec
-                rec["paso"] = sesion_rec.paso
-                rec["mensaje"] = sesion_rec.mensaje
-                rec["estado"] = "activo"
-            except ErrorRecuperacion as exc:
-                rec["estado"] = "error"
-                rec["error"] = str(exc)
-                rec["mensaje"] = str(exc)
-            except Exception as exc:  # noqa: BLE001
-                rec["estado"] = "error"
-                rec["error"] = f"No se pudo iniciar el flujo: {type(exc).__name__}"
-                rec["mensaje"] = rec["error"]
+        if MODO_RECUPERACION == "navegador":
+            async with _job_lock:  # un navegador a la vez (economía de RAM)
+                await _abrir_una()
+        else:
+            await _abrir_una()
 
     asyncio.create_task(_abrir())
     return {"rec_id": rec_id}
@@ -720,6 +747,7 @@ def _recuperacion_respuesta(rec: dict) -> dict:
         "paso": rec["paso"],
         "mensaje": rec["mensaje"],
         "error": rec["error"],
+        "medios": rec.get("medios") or [],
     }
 
 
@@ -746,7 +774,7 @@ async def api_recuperacion_paso(
         raise HTTPException(status_code=401, detail="No autenticado.")
     rec = _recuperacion_de(rec_id, s[0])
     rec["ultimo_uso"] = time.time()
-    sesion_rec: SesionRecuperacion | None = rec.get("sesion")
+    sesion_rec: SesionRecuperacion | SesionRecuperacionAPI | None = rec.get("sesion")
     if rec["estado"] != "activo" or not sesion_rec:
         raise HTTPException(
             status_code=409,
@@ -756,7 +784,7 @@ async def api_recuperacion_paso(
     accion = body.accion
     try:
         if accion == "enviar_codigo":
-            await sesion_rec.enviar_codigo()
+            await sesion_rec.enviar_codigo(body.medio)
         elif accion == "reenviar":
             await sesion_rec.reenviar_codigo()
         elif accion == "codigo":
@@ -797,6 +825,9 @@ async def api_recuperacion_paso(
         raise
     except ErrorRecuperacion as exc:
         # Error controlado del portal: la sesión sigue viva para reintentar.
+        # La sesión pudo retroceder de paso (p. ej. un OTP inválido vuelve a
+        # «codigo»), así que se sincroniza su estado real.
+        rec["paso"] = sesion_rec.paso
         rec["error"] = str(exc)
         rec["mensaje"] = str(exc)
         return _recuperacion_respuesta(rec)
