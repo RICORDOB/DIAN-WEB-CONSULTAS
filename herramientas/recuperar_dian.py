@@ -21,8 +21,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
-import secrets
-import subprocess
 import sys
 from pathlib import Path
 
@@ -31,34 +29,7 @@ if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
 from app.recuperacion import ErrorRecuperacion, SesionRecuperacion  # noqa: E402
-
-_MAYUS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
-_MINUS = "abcdefghijkmnopqrstuvwxyz"
-_DIGITOS = "23456789"
-_SIMBOLOS = "!@#$%*+-"
-
-
-def generar_clave_segura(largo: int = 14) -> str:
-    """Réplica de la clave segura del panel (sin caracteres ambiguos)."""
-    todos = _MAYUS + _MINUS + _DIGITOS + _SIMBOLOS
-    clave = [
-        secrets.choice(_MAYUS),
-        secrets.choice(_MINUS),
-        secrets.choice(_DIGITOS),
-        secrets.choice(_SIMBOLOS),
-    ]
-    clave += [secrets.choice(todos) for _ in range(max(0, largo - 4))]
-    secrets.SystemRandom().shuffle(clave)
-    return "".join(clave)
-
-
-def copiar_portapapeles(texto: str) -> bool:
-    """Copia al portapapeles en macOS (pbcopy); tolera fallos."""
-    try:
-        subprocess.run(["pbcopy"], input=texto.encode(), check=True, timeout=5)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+from herramientas.comun import copiar_portapapeles, generar_clave_segura  # noqa: E402
 
 
 async def flujo(numero: str, tipo: str, espera_captcha: int) -> int:
