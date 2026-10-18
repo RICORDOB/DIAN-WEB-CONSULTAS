@@ -204,7 +204,7 @@ def _sesion(token: Optional[str]) -> Optional[tuple[str, str]]:
 @app.get("/", response_class=HTMLResponse)
 async def pag_inicio():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -212,7 +212,7 @@ async def pag_panel(sesion: str | None = Cookie(default=None)):
     if not _sesion(sesion):
         return RedirectResponse("/", status_code=303)
     html = (STATIC_DIR / "panel.html").read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/dev", response_class=HTMLResponse)
@@ -221,7 +221,7 @@ async def pag_dev(sesion: str | None = Cookie(default=None)):
     if not s or s[1] != "admin":
         return RedirectResponse("/panel", status_code=303)
     html = (STATIC_DIR / "dev.html").read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/contadores", response_class=HTMLResponse)
@@ -233,14 +233,14 @@ async def pag_contadores(sesion: str | None = Cookie(default=None)):
     if not (s[1] == "admin" or auth.tiene_acceso_contador(s[0])):
         return RedirectResponse("/panel", status_code=303)
     html = (STATIC_DIR / "contadores.html").read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/privacidad", response_class=HTMLResponse)
 async def pag_privacidad():
     """Política de privacidad y tratamiento de datos (página pública)."""
     html = (STATIC_DIR / "privacidad.html").read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/masiva/plantilla")
@@ -568,6 +568,13 @@ async def api_descargar(job_id: str, sesion: str | None = Cookie(default=None)):
 # verificación lo recibe el cliente (correo/celular) y lo teclea una persona.
 TTL_RECUPERACION = 10 * 60  # segundos de inactividad antes de expirar
 
+# La recuperación desde la web queda deshabilitada hasta rediseñarla: la DIAN
+# protegió el primer paso con un captcha de Cloudflare que la automatización en
+# el servidor no puede superar (ver app/recuperacion.py). Mientras esté en
+# False, /api/recuperacion/iniciar responde 503 y el restablecimiento se hace
+# en local con herramientas/recuperar_dian.py.
+RECUPERACION_WEB_ACTIVA = False
+
 _recuperaciones: dict[str, dict] = {}
 
 
@@ -638,6 +645,15 @@ async def api_recuperacion_iniciar(
     if not s:
         raise HTTPException(status_code=401, detail="No autenticado.")
     usuario = s[0]
+
+    if not RECUPERACION_WEB_ACTIVA:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "El restablecimiento desde la web está temporalmente "
+                "deshabilitado. Usa la herramienta local de recuperación."
+            ),
+        )
 
     numero = body.numero_documento.strip()
     if not numero.isdigit():

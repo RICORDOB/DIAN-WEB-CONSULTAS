@@ -80,6 +80,9 @@ def stub(monkeypatch):
     StubRecuperacion.instancias = []
     StubRecuperacion.fallar_iniciar = False
     monkeypatch.setattr(main_mod, "SesionRecuperacion", StubRecuperacion)
+    # En producción el endpoint está apagado (RECUPERACION_WEB_ACTIVA=False);
+    # estos tests ejercitan el flujo completo, así que se enciende.
+    monkeypatch.setattr(main_mod, "RECUPERACION_WEB_ACTIVA", True)
     return StubRecuperacion
 
 
@@ -247,3 +250,14 @@ def test_error_al_iniciar_expone_mensaje(client, db, admin, stub):
     datos = _esperar_estado(client, rec_id, cookie, "error")
     assert "portal" in datos["mensaje"]
     assert stub.instancias[-1].cerrada is True
+
+
+def test_iniciar_deshabilitado_cuando_la_bandera_esta_apagada(
+    client, db, admin, stub, monkeypatch
+):
+    """Con RECUPERACION_WEB_ACTIVA=False (producción) responde 503 legible."""
+    monkeypatch.setattr(main_mod, "RECUPERACION_WEB_ACTIVA", False)
+    cookie = _preparar_usuario(client, admin)
+    r = _iniciar(client, cookie)
+    assert r.status_code == 503
+    assert "deshabilitado" in r.json()["detail"]
