@@ -12,6 +12,10 @@ Rutas:
   GET  /api/me                  -> sesión actual
   POST /api/consulta            -> iniciar consulta individual (crea job)
   POST /api/rut                 -> obtener copia del RUT (PDF) del cliente
+  POST /api/recuperacion/iniciar-> flujo guiado: restablecer contraseña DIAN
+  GET  /api/recuperacion/{id}   -> estado/paso del flujo de recuperación
+  POST /api/recuperacion/{id}/paso     -> avanzar paso (código/clave/…)
+  POST /api/recuperacion/{id}/cancelar -> cancelar y cerrar la sesión
   GET  /api/job/{id}            -> estado/progreso de un job
   GET  /api/job/{id}/descargar  -> descargar el libro .xls resultante
   GET  /api/admin/pendientes    -> solicitudes de alta (requiere admin)
@@ -56,6 +60,7 @@ from . import batch as batch_mod
 from . import db
 from . import push
 from .bot import cifrado, motor, tokens as bot_tokens
+from .recuperacion import PASO_EXITO, ErrorRecuperacion, SesionRecuperacion
 from .runner import DianRunner
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -91,6 +96,7 @@ RATE_POR_RUTA = {
     "/api/registro": 5,
     "/api/consulta": 10,
     "/api/rut": 10,
+    "/api/recuperacion/iniciar": 5,
     "/api/admin/clientes": 5,
     "/api/bot/mensaje": 30,
     "/api/bot/accion": 30,
@@ -112,7 +118,8 @@ async def _middleware_seguridad(request: Request, call_next):
     # Headers de seguridad (el HTTPS lo provee la plataforma)
     if request.url.path in RATE_POR_RUTA:
         ip = request.client.host if request.client else "desconocida"
-        if not _permitido_rate_limit(ip, RATE_POR_RUTA[request.url.path]):
+        clave = f"{ip}:{request.url.path}"
+        if not _permitido_rate_limit(clave, RATE_POR_RUTA[request.url.path]):
             return JSONResponse(
                 {"detail": "Demasiados intentos. Espera un momento e intenta de nuevo."},
                 status_code=429,
@@ -161,6 +168,18 @@ class PushRegIn(BaseModel):
 
 class PushDelIn(BaseModel):
     endpoint: str
+
+
+class RecuperacionIn(BaseModel):
+    tipo_documento: str = "Cédula de Ciudadanía"
+    numero_documento: str
+
+
+class RecuperacionPasoIn(BaseModel):
+    accion: str  # enviar_codigo | reenviar | codigo | clave
+    codigo: Optional[str] = None
+    contrasena: Optional[str] = None
+    confirmacion: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +561,266 @@ async def api_descargar(job_id: str, sesion: str | None = Cookie(default=None)):
     )
 
 
+# ---------------------------------------------------------------------------
+# API: recuperación de contraseña DIAN (flujo guiado por pasos)
+# ---------------------------------------------------------------------------
+# La sesión del navegador se mantiene viva entre pasos porque el código de
+# verificación lo recibe el cliente (correo/celular) y lo teclea una persona.
+TTL_RECUPERACION = 10 * 60  # segundos de inactividad antes de expirar
+
+_recuperaciones: dict[str, dict] = {}
+
+
+async def _cerrar_recuperacion(rec_id: str, estado: str, mensaje: str = "") -> None:
+    """Marca el estado final y cierra la sesión del navegador si sigue viva."""
+    rec = _recuperaciones.get(rec_id)
+    if not rec:
+        return
+    sesion_rec = rec.pop("sesion", None)
+    rec["estado"] = estado
+    if mensaje:
+        rec["mensaje"] = mensaje
+    if sesion_rec:
+        await sesion_rec.cerrar()
+
+
+async def _cerrar_sesion_segura(sesion_rec: SesionRecuperacion) -> None:
+    try:
+        await sesion_rec.cerrar()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _recuperacion_de(rec_id: str, usuario: str) -> dict:
+    """Recuperación del usuario o error 404/410 (expirada por inactividad)."""
+    rec = _recuperaciones.get(rec_id)
+    if not rec or rec["usuario"] != usuario:
+        raise HTTPException(status_code=404, detail="Recuperación no encontrada.")
+    if time.time() - rec["ultimo_uso"] > TTL_RECUPERACION and rec["estado"] in (
+        "queued",
+        "running",
+        "activo",
+    ):
+        asyncio.create_task(
+            _cerrar_recuperacion(rec_id, "expirado", "La sesión de recuperación expiró.")
+        )
+        raise HTTPException(
+            status_code=410,
+            detail="La sesión de recuperación expiró. Iníciala de nuevo.",
+        )
+    return rec
+
+
+def _guardar_clave_recuperada(rec: dict, contrasena: str) -> None:
+    """Cifra y guarda la nueva contraseña en el catálogo (conserva vencimiento)."""
+    try:
+        previo = auth.buscar_cliente(rec["numero_documento"]) or {}
+        auth.guardar_cliente(
+            rec["numero_documento"],
+            rec["tipo_documento"],
+            cifrado.cifrar(contrasena),
+            previo.get("fecha_vencimiento"),
+            contrasena_propia=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # La contraseña YA quedó cambiada en la DIAN; solo falló el guardado local.
+        rec["error"] = (
+            "La contraseña se cambió en la DIAN, pero no se pudo guardar en el "
+            f"catálogo: {type(exc).__name__}"
+        )
+
+
+@app.post("/api/recuperacion/iniciar")
+async def api_recuperacion_iniciar(
+    body: RecuperacionIn, sesion: str | None = Cookie(default=None)
+):
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    usuario = s[0]
+
+    numero = body.numero_documento.strip()
+    if not numero.isdigit():
+        raise HTTPException(
+            status_code=400, detail="El número de documento debe ser numérico."
+        )
+
+    # Una sola recuperación viva por usuario: reemplaza la anterior.
+    for otro_id, rec in list(_recuperaciones.items()):
+        if rec["usuario"] == usuario and rec["estado"] in ("queued", "running", "activo"):
+            asyncio.create_task(
+                _cerrar_recuperacion(
+                    otro_id, "cancelado", "Reemplazada por una nueva solicitud."
+                )
+            )
+
+    rec_id = uuid.uuid4().hex
+    rec_dir = JOBS_DIR / f"rec_{rec_id}"
+    _recuperaciones[rec_id] = {
+        "usuario": usuario,
+        "tipo_documento": body.tipo_documento,
+        "numero_documento": numero,
+        "estado": "queued",
+        "paso": "",
+        "mensaje": "Abriendo el portal de la DIAN…",
+        "error": None,
+        "sesion": None,
+        "dir": rec_dir,
+        "creado": time.time(),
+        "ultimo_uso": time.time(),
+    }
+
+    async def _abrir():
+        async with _job_lock:  # un navegador a la vez (economía de RAM)
+            rec = _recuperaciones.get(rec_id)
+            if not rec or rec["estado"] == "cancelado":
+                return
+            rec["estado"] = "running"
+            try:
+                sesion_rec = SesionRecuperacion(
+                    body.tipo_documento, numero, dir_trabajo=rec_dir
+                )
+                await sesion_rec.iniciar()
+                rec["sesion"] = sesion_rec
+                rec["paso"] = sesion_rec.paso
+                rec["mensaje"] = sesion_rec.mensaje
+                rec["estado"] = "activo"
+            except ErrorRecuperacion as exc:
+                rec["estado"] = "error"
+                rec["error"] = str(exc)
+                rec["mensaje"] = str(exc)
+            except Exception as exc:  # noqa: BLE001
+                rec["estado"] = "error"
+                rec["error"] = f"No se pudo iniciar el flujo: {type(exc).__name__}"
+                rec["mensaje"] = rec["error"]
+
+    asyncio.create_task(_abrir())
+    return {"rec_id": rec_id}
+
+
+def _recuperacion_respuesta(rec: dict) -> dict:
+    return {
+        "estado": rec["estado"],
+        "paso": rec["paso"],
+        "mensaje": rec["mensaje"],
+        "error": rec["error"],
+    }
+
+
+@app.get("/api/recuperacion/{rec_id}")
+async def api_recuperacion_estado(
+    rec_id: str, sesion: str | None = Cookie(default=None)
+):
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    rec = _recuperacion_de(rec_id, s[0])
+    rec["ultimo_uso"] = time.time()
+    return _recuperacion_respuesta(rec)
+
+
+@app.post("/api/recuperacion/{rec_id}/paso")
+async def api_recuperacion_paso(
+    rec_id: str,
+    body: RecuperacionPasoIn,
+    sesion: str | None = Cookie(default=None),
+):
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    rec = _recuperacion_de(rec_id, s[0])
+    rec["ultimo_uso"] = time.time()
+    sesion_rec: SesionRecuperacion | None = rec.get("sesion")
+    if rec["estado"] != "activo" or not sesion_rec:
+        raise HTTPException(
+            status_code=409,
+            detail=rec["error"] or "La recuperación no está lista para este paso.",
+        )
+
+    accion = body.accion
+    try:
+        if accion == "enviar_codigo":
+            await sesion_rec.enviar_codigo()
+        elif accion == "reenviar":
+            await sesion_rec.reenviar_codigo()
+        elif accion == "codigo":
+            codigo = (body.codigo or "").strip()
+            if not codigo or len(codigo) > 20:
+                raise HTTPException(status_code=400, detail="Escribe el código recibido.")
+            await sesion_rec.aplicar_codigo(codigo)
+        elif accion == "clave":
+            contrasena = body.contrasena or ""
+            confirmacion = body.confirmacion or ""
+            if len(contrasena) < 8 or len(contrasena) > 128:
+                raise HTTPException(
+                    status_code=400,
+                    detail="La contraseña debe tener entre 8 y 128 caracteres.",
+                )
+            if contrasena != confirmacion:
+                raise HTTPException(
+                    status_code=400, detail="Las contraseñas no coinciden."
+                )
+            await sesion_rec.definir_clave(contrasena, confirmacion)
+        else:
+            raise HTTPException(status_code=400, detail="Acción no reconocida.")
+
+        rec["paso"] = sesion_rec.paso
+        rec["mensaje"] = sesion_rec.mensaje
+
+        if accion == "clave" and sesion_rec.paso == PASO_EXITO:
+            _guardar_clave_recuperada(rec, body.contrasena or "")
+            await _cerrar_recuperacion(rec_id, "exito", sesion_rec.mensaje)
+            await asyncio.to_thread(
+                push.notificar,
+                s[0],
+                "Contraseña DIAN actualizada",
+                "La nueva contraseña quedó guardada para tus consultas.",
+            )
+        return _recuperacion_respuesta(rec)
+    except HTTPException:
+        raise
+    except ErrorRecuperacion as exc:
+        # Error controlado del portal: la sesión sigue viva para reintentar.
+        rec["error"] = str(exc)
+        rec["mensaje"] = str(exc)
+        return _recuperacion_respuesta(rec)
+    except Exception as exc:  # noqa: BLE001
+        await _cerrar_recuperacion(
+            rec_id, "error", f"Fallo inesperado: {type(exc).__name__}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Fallo inesperado en el flujo de recuperación."
+        ) from exc
+
+
+@app.post("/api/recuperacion/{rec_id}/cancelar")
+async def api_recuperacion_cancelar(
+    rec_id: str, sesion: str | None = Cookie(default=None)
+):
+    s = _sesion(sesion)
+    if not s:
+        raise HTTPException(status_code=401, detail="No autenticado.")
+    rec = _recuperacion_de(rec_id, s[0])
+    rec["ultimo_uso"] = time.time()
+    await _cerrar_recuperacion(rec_id, "cancelado", "Recuperación cancelada.")
+    return _recuperacion_respuesta(rec)
+
+
+def _limpiar_recuperaciones() -> None:
+    """Cierra y libera recuperaciones terminadas o inactivas por más del TTL."""
+    ahora = time.time()
+    for rec_id in list(_recuperaciones.keys()):
+        rec = _recuperaciones[rec_id]
+        terminada = rec["estado"] in ("exito", "error", "cancelado", "expirado")
+        inactiva = ahora - rec["ultimo_uso"] > TTL_RECUPERACION
+        if (terminada and ahora - rec["ultimo_uso"] > 300) or inactiva:
+            _recuperaciones.pop(rec_id, None)
+            sesion_rec = rec.pop("sesion", None)
+            if sesion_rec:
+                asyncio.create_task(_cerrar_sesion_segura(sesion_rec))
+            shutil.rmtree(rec["dir"], ignore_errors=True)
+
+
 def _limpiar_jobs_viejos() -> None:
     """Limpia jobs/batches terminados con más de 1 hora de antigüedad (libera
     espacio sin borrar resultados recién generados)."""
@@ -556,6 +835,7 @@ def _limpiar_jobs_viejos() -> None:
         if b["estado"] in ("done", "error") and ahora - b["creado"] > 3600:
             shutil.rmtree(b["dir"], ignore_errors=True)
             _batches.pop(batch_id, None)
+    _limpiar_recuperaciones()
 
 
 # ---------------------------------------------------------------------------

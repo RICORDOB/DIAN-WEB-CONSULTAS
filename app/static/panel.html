@@ -10,7 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="apple-touch-icon" href="/assets/icons/icon-192.png" />
   <title>ExoRenta — Consulta</title>
-<link rel="stylesheet" href="/assets/styles.css?v=20260912r1" />
+<link rel="stylesheet" href="/assets/styles.css?v=20261017r1" />
 </head>
 <body>
   <header class="barra">
@@ -56,6 +56,32 @@
       <div class="botones-accion">
         <button type="button" class="boton" id="btnConsultar">Consulta ExoRenta</button>
         <button type="button" class="boton secundario" id="btnRut">Obtener copia del RUT</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card panel-ancho">
+    <h1>Credenciales DIAN</h1>
+    <p class="subtitulo">¿La contraseña del cliente falla o está vencida? Restablécele una nueva de forma guiada. La DIAN enviará un código al correo o celular registrado por el cliente.</p>
+
+    <div id="recMensaje" class="mensaje oculto"></div>
+
+    <form id="recForm" class="formulario">
+      <label for="recTipoDocumento">Tipo de documento</label>
+      <select id="recTipoDocumento">
+        <option>Cédula de Ciudadanía</option>
+        <option>Cédula de Extranjería</option>
+        <option>NIT</option>
+        <option>Tarjeta de Identidad</option>
+        <option>Pasaporte</option>
+        <option>NUIP</option>
+      </select>
+
+      <label for="recNumeroDocumento">Número de cédula / documento</label>
+      <input type="text" id="recNumeroDocumento" required inputmode="numeric" autocomplete="off" />
+
+      <div class="botones-accion">
+        <button type="button" class="boton" id="btnRecuperar">Restablecer contraseña (guiado)</button>
       </div>
     </form>
   </div>
@@ -119,10 +145,69 @@
       </div>
     </div>
 
+  <div id="modalRecuperacion" class="modal-fondo oculto" role="dialog" aria-modal="true" aria-labelledby="recTitulo">
+    <div class="modal-caja">
+      <h3 id="recTitulo">Recuperar contraseña DIAN</h3>
+      <p class="subtitulo" id="recDocCliente"></p>
+      <div id="recAviso" class="mensaje oculto"></div>
+
+      <div id="recPasoEspera">
+        <p class="rec-espera"><span class="rec-spinner"></span><span id="recEsperaTexto">Abriendo el portal de la DIAN…</span></p>
+      </div>
+
+      <div id="recPasoMenu" class="oculto">
+        <p id="recMenuTexto"></p>
+        <div class="modal-acciones">
+          <button type="button" class="boton" id="btnRecEnviar">Enviar código</button>
+        </div>
+      </div>
+
+      <div id="recPasoCodigo" class="oculto">
+        <label for="recCodigo">Código recibido por el cliente (correo o celular)</label>
+        <input type="text" id="recCodigo" inputmode="numeric" autocomplete="one-time-code" />
+        <div class="modal-acciones">
+          <button type="button" class="boton" id="btnRecVerificar">Verificar código</button>
+          <button type="button" class="boton secundario" id="btnRecReenviar">Reenviar código</button>
+        </div>
+      </div>
+
+      <div id="recPasoClave" class="oculto">
+        <label for="recClave">Nueva contraseña (mínimo 8 caracteres)</label>
+        <input type="password" id="recClave" autocomplete="new-password" />
+        <label for="recClave2">Confirmar contraseña</label>
+        <input type="password" id="recClave2" autocomplete="new-password" />
+        <label class="rec-check"><input type="checkbox" id="recVerClave" /> Mostrar contraseña</label>
+        <div class="modal-acciones">
+          <button type="button" class="boton ok" id="btnRecGuardar">Guardar contraseña</button>
+          <button type="button" class="boton secundario" id="btnRecGenerar">Generar segura</button>
+        </div>
+      </div>
+
+      <div id="recPasoExito" class="oculto">
+        <p class="rec-exito">&#10003; Contraseña actualizada en la DIAN</p>
+        <p class="subtitulo" id="recExitoTexto"></p>
+        <div class="modal-acciones">
+          <button type="button" class="boton ok" id="btnRecFinal">Cerrar</button>
+        </div>
+      </div>
+
+      <div id="recPasoError" class="oculto">
+        <p id="recErrorTexto"></p>
+        <div class="modal-acciones">
+          <button type="button" class="boton secundario" id="btnRecErrorCerrar">Cerrar</button>
+        </div>
+      </div>
+
+      <div class="modal-pie" id="recPie">
+        <button type="button" class="boton-enlace" id="btnRecCancelar">Cancelar proceso</button>
+      </div>
+    </div>
+  </div>
+
   <footer class="pie">Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.<br />
     &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
     <a href="/privacidad">Política de Privacidad</a></footer>
 
-<script src="/assets/app.js?v=20260912r1"></script>
+<script src="/assets/app.js?v=20261017r1"></script>
 </body>
 </html>

@@ -1040,6 +1040,230 @@ function iniciarDescargaBlob() {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Recuperación de contraseña DIAN (panel.html)                        */
+/* ------------------------------------------------------------------ */
+function iniciarRecuperacion() {
+  const form = document.getElementById("recForm");
+  const modal = document.getElementById("modalRecuperacion");
+  if (!form || !modal) return;
+
+  const mensaje = document.getElementById("recMensaje");
+  const btnRecuperar = document.getElementById("btnRecuperar");
+  const aviso = document.getElementById("recAviso");
+  const docCliente = document.getElementById("recDocCliente");
+  const esperaTexto = document.getElementById("recEsperaTexto");
+  const menuTexto = document.getElementById("recMenuTexto");
+  const errorTexto = document.getElementById("recErrorTexto");
+  const exitoTexto = document.getElementById("recExitoTexto");
+  const pie = document.getElementById("recPie");
+  const PASOS = ["recPasoEspera", "recPasoMenu", "recPasoCodigo", "recPasoClave",
+                 "recPasoExito", "recPasoError"];
+  const BOTONES = ["btnRecEnviar", "btnRecVerificar", "btnRecReenviar",
+                   "btnRecGuardar", "btnRecGenerar", "btnRecFinal",
+                   "btnRecErrorCerrar", "btnRecCancelar"];
+  let recId = null;
+  let pollTimer = null;
+
+  function mostrarPaso(id) {
+    PASOS.forEach(function (p) {
+      document.getElementById(p).classList.toggle("oculto", p !== id);
+    });
+    // "Cancelar proceso" solo tiene sentido mientras el flujo vive
+    const terminal = id === "recPasoExito" || id === "recPasoError";
+    pie.classList.toggle("oculto", terminal);
+  }
+
+  function bloquear(estado) {
+    BOTONES.forEach(function (id) {
+      const b = document.getElementById(id);
+      if (b) b.disabled = estado;
+    });
+  }
+
+  function avisar(texto) {
+    if (!texto) { aviso.classList.add("oculto"); return; }
+    mostrarMensaje(aviso, texto, "error");
+  }
+
+  function pararPoll() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function cerrarModal() {
+    pararPoll();
+    recId = null;
+    modal.classList.add("oculto");
+    form.reset();
+    document.getElementById("recCodigo").value = "";
+    document.getElementById("recClave").value = "";
+    document.getElementById("recClave2").value = "";
+    avisar("");
+  }
+
+  function aplicarEstado(data) {
+    if (data.estado === "queued" || data.estado === "running") {
+      esperaTexto.textContent = data.mensaje || "Abriendo el portal de la DIAN…";
+      mostrarPaso("recPasoEspera");
+      return;
+    }
+    if (data.estado === "exito") {
+      pararPoll();
+      exitoTexto.textContent = data.mensaje || "";
+      mostrarPaso("recPasoExito");
+      return;
+    }
+    if (data.estado !== "activo") {
+      pararPoll();
+      errorTexto.textContent = data.error || data.mensaje ||
+        "El proceso no pudo continuar.";
+      mostrarPaso("recPasoError");
+      return;
+    }
+    // Sesión viva: el paso manda qué pantalla mostrar
+    avisar(data.error || "");
+    if (data.paso === "menu") {
+      menuTexto.textContent = data.mensaje || "";
+      mostrarPaso("recPasoMenu");
+    } else if (data.paso === "codigo") {
+      mostrarPaso("recPasoCodigo");
+    } else if (data.paso === "clave") {
+      mostrarPaso("recPasoClave");
+    }
+  }
+
+  function consultarEstado() {
+    if (!recId) return;
+    peticion("/api/recuperacion/" + recId).then((resp) => {
+      if (!resp.ok) {
+        pararPoll();
+        errorTexto.textContent = resp.status === 410
+          ? "La sesión de recuperación expiró. Iníciala de nuevo."
+          : "La recuperación ya no está disponible.";
+        mostrarPaso("recPasoError");
+        return;
+      }
+      return resp.json().then(aplicarEstado);
+    }).catch(() => {});
+  }
+
+  function enviarPaso(accion, extra) {
+    if (!recId) return;
+    bloquear(true);
+    avisar("");
+    peticion("/api/recuperacion/" + recId + "/paso", {
+      method: "POST",
+      body: JSON.stringify(Object.assign({ accion: accion }, extra || {})),
+    }).then((resp) => {
+      bloquear(false);
+      if (resp.status === 409 || resp.status === 410) {
+        return resp.json().then((data) => {
+          pararPoll();
+          errorTexto.textContent = extraerDetalle(data);
+          mostrarPaso("recPasoError");
+        });
+      }
+      if (!resp.ok) return manejarError(resp, aviso);
+      return resp.json().then(aplicarEstado);
+    }).catch(() => bloquear(false));
+  }
+
+  function generarClaveSegura() {
+    // Cumple los criterios típicos de la DIAN: 14+ caracteres con mayúscula,
+    // minúscula, número y símbolo; sin caracteres ambiguos (O/0, l/1).
+    const mayus = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const minus = "abcdefghijkmnopqrstuvwxyz";
+    const digitos = "23456789";
+    const simbolos = "!@#$%*+-";
+    const todos = mayus + minus + digitos + simbolos;
+    const bytes = new Uint32Array(14);
+    window.crypto.getRandomValues(bytes);
+    let clave = mayus[bytes[0] % mayus.length] + minus[bytes[1] % minus.length] +
+      digitos[bytes[2] % digitos.length] + simbolos[bytes[3] % simbolos.length];
+    for (let i = 4; i < bytes.length; i++) {
+      clave += todos[bytes[i] % todos.length];
+    }
+    return clave;
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    btnRecuperar.click();
+  });
+
+  btnRecuperar.addEventListener("click", () => {
+    if (!modal.classList.contains("oculto")) return; // ya hay un proceso en curso
+    const numero = document.getElementById("recNumeroDocumento").value.trim();
+    if (!numero) {
+      mostrarMensaje(mensaje, "Escribe el número de documento.", "error");
+      return;
+    }
+    mensaje.classList.add("oculto");
+    btnRecuperar.disabled = true;
+    const tipo = document.getElementById("recTipoDocumento").value;
+    peticion("/api/recuperacion/iniciar", {
+      method: "POST",
+      body: JSON.stringify({ tipo_documento: tipo, numero_documento: numero }),
+    }).then((resp) => {
+      btnRecuperar.disabled = false;
+      if (!resp.ok) return manejarError(resp, mensaje);
+      return resp.json().then((data) => {
+        recId = data.rec_id;
+        docCliente.textContent = tipo + " " + numero;
+        avisar("");
+        esperaTexto.textContent = "Abriendo el portal de la DIAN…";
+        mostrarPaso("recPasoEspera");
+        modal.classList.remove("oculto");
+        pararPoll();
+        pollTimer = setInterval(consultarEstado, 1500);
+        consultarEstado();
+      });
+    }).catch(() => { btnRecuperar.disabled = false; });
+  });
+
+  document.getElementById("btnRecEnviar").addEventListener("click", () => {
+    enviarPaso("enviar_codigo");
+  });
+  document.getElementById("btnRecReenviar").addEventListener("click", () => {
+    enviarPaso("reenviar");
+  });
+  document.getElementById("btnRecVerificar").addEventListener("click", () => {
+    const codigo = document.getElementById("recCodigo").value.trim();
+    if (!codigo) { avisar("Escribe el código recibido."); return; }
+    enviarPaso("codigo", { codigo: codigo });
+  });
+  document.getElementById("btnRecGuardar").addEventListener("click", () => {
+    const clave = document.getElementById("recClave").value;
+    const clave2 = document.getElementById("recClave2").value;
+    if (clave.length < 8) {
+      avisar("La contraseña debe tener al menos 8 caracteres.");
+      return;
+    }
+    if (clave !== clave2) { avisar("Las contraseñas no coinciden."); return; }
+    enviarPaso("clave", { contrasena: clave, confirmacion: clave2 });
+  });
+  document.getElementById("btnRecGenerar").addEventListener("click", () => {
+    const clave = generarClaveSegura();
+    document.getElementById("recClave").value = clave;
+    document.getElementById("recClave2").value = clave;
+    document.getElementById("recVerClave").checked = true;
+    document.getElementById("recClave").type = "text";
+    document.getElementById("recClave2").type = "text";
+    avisar("");
+  });
+  document.getElementById("recVerClave").addEventListener("change", (e) => {
+    const tipo = e.target.checked ? "text" : "password";
+    document.getElementById("recClave").type = tipo;
+    document.getElementById("recClave2").type = tipo;
+  });
+  document.getElementById("btnRecFinal").addEventListener("click", cerrarModal);
+  document.getElementById("btnRecErrorCerrar").addEventListener("click", cerrarModal);
+  document.getElementById("btnRecCancelar").addEventListener("click", () => {
+    if (recId) peticion("/api/recuperacion/" + recId + "/cancelar", { method: "POST" });
+    cerrarModal();
+  });
+}
+
 /* Dispatcher por página                                               */
 /* ------------------------------------------------------------------ */
 document.addEventListener("DOMContentLoaded", () => {
@@ -1048,6 +1272,7 @@ document.addEventListener("DOMContentLoaded", () => {
     iniciarLogin();
   } else if (path === "/panel") {
     iniciarPanel();
+    iniciarRecuperacion();
     iniciarDescargaBlob();
   } else if (path === "/dev") {
     iniciarDev();
