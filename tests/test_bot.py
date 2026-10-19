@@ -30,7 +30,8 @@ def client():
 
 def _guardar_cliente(cedula="31200506", contrasena="Gladys123*"):
     auth.guardar_cliente(cedula, "Cédula de Ciudadanía",
-                         cifrado.cifrar(contrasena), "2026-08-14")
+                         cifrado.cifrar(contrasena), "2026-08-14",
+                         fecha_expedicion_doc="2010-05-20")
 
 
 # ------------------------------------------------------------------------- //

@@ -21,6 +21,12 @@ _serializer = URLSafeTimedSerializer(
 DURACION_DESCARGA_SEG = 15 * 60
 _tokens_descarga: dict[str, bool] = {}
 
+# Enlaces de activación de la cuenta DIAN. No son de un solo uso: el token
+# deja de servir cuando el cliente ya tiene clave en el catálogo. La fecha de
+# expedición viaja firmada para que el enlace no dependa de la BD al abrirlo.
+SAL_ACTIVACION = "activacion-cuenta-dian"
+DURACION_ACTIVACION_SEG = int(os.environ.get("APP_ACTIVACION_DIAS", "7")) * 86400
+
 
 def crear_cookie_chat(chat_id: str) -> str:
     """Firma el chat_id en una cookie anónima de 12 h (renovable al usarse)."""
@@ -56,3 +62,38 @@ def consumir_token_descarga(token: str) -> tuple[str, str] | None:
         _tokens_descarga[token] = True
         return (data["chat"], data["job_id"])
     return None
+
+
+# ---------------------------------------------------------------------------
+# Activación de la cuenta DIAN (primera clave)
+# ---------------------------------------------------------------------------
+def emitir_token_activacion(
+    numero_documento: str, tipo_documento: str, fecha_expedicion: str
+) -> str:
+    """Firma un enlace de activación para un cliente sin clave DIAN."""
+    return _serializer.dumps(
+        {
+            "proposito": "activacion",
+            "doc": str(numero_documento).strip(),
+            "tipo": str(tipo_documento).strip(),
+            "fecha": str(fecha_expedicion).strip(),
+        },
+        salt=SAL_ACTIVACION,
+    )
+
+
+def leer_token_activacion(token: str) -> dict | None:
+    """Devuelve los datos firmados del enlace, o None si es inválido/venció.
+
+    El token no autoriza nada por sí solo: la DIAN exige el OTP que recibe el
+    cliente. Solo identifica al cliente y su fecha de expedición.
+    """
+    try:
+        data = _serializer.loads(
+            token or "", salt=SAL_ACTIVACION, max_age=DURACION_ACTIVACION_SEG
+        )
+    except (BadSignature, SignatureExpired, TypeError):
+        return None
+    if data.get("proposito") != "activacion" or not data.get("doc"):
+        return None
+    return data

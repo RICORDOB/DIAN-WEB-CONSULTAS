@@ -517,6 +517,12 @@ h1 { margin: 0 0 4px; font-size: 22px; color: #0c1f3f; }
   transition: background .12s ease;
 }
 .bot-boton-accion:hover { background: #d1fae5; }
+/* Cuando la acción abre una página (enlace) en vez de un botón de chat. */
+a.bot-boton-accion {
+  text-decoration: none;
+  box-sizing: border-box;
+  display: block;
+}
 
 .bot-descarga {
   display: inline-block;

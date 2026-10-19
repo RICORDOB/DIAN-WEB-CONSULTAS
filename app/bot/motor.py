@@ -16,14 +16,19 @@ from __future__ import annotations
 import time
 import uuid
 
+from herramientas.recuperar_dian_api import ErrorDIAN, normalizar_fecha_expedicion
+
 from .. import auth
 from . import cifrado
+from . import tokens as bot_tokens
 
 # Estados del diálogo
 ESPERA_CEDULA = "espera_cedula"
 NO_CLIENTE = "no_cliente"
 ESPERA_OPCION = "espera_opcion"
 PROCESANDO = "procesando"
+SIN_CLAVE = "sin_clave"
+ESPERA_FECHA_EXPEDICION = "espera_fecha_expedicion"
 
 # Tiempo de inactividad antes de limpiar una conversación (15 min)
 INACTIVIDAD_SEG = 15 * 60
@@ -100,6 +105,59 @@ def _respuesta(mensajes: list[str], acciones: dict | None = None,
     }
 
 
+def _tiene_clave(cliente: dict | None) -> bool:
+    """True si el cliente ya tiene una credencial DIAN guardada."""
+    return bool(str((cliente or {}).get("contrasena_cifrada") or "").strip())
+
+
+def _enlace_activacion(cliente: dict) -> str:
+    token = bot_tokens.emitir_token_activacion(
+        cliente["numero_documento"],
+        cliente["tipo_documento"],
+        str(cliente.get("fecha_expedicion_doc") or ""),
+    )
+    return f"/activar?t={token}"
+
+
+def _respuesta_activacion(cliente: dict) -> dict:
+    """Ofrece el enlace para crear la primera clave DIAN del cliente."""
+    dias = max(1, bot_tokens.DURACION_ACTIVACION_SEG // 86400)
+    return _respuesta(
+        [
+            f"Tu cédula {_mascara(cliente['numero_documento'])} está registrada, "
+            "pero todavía no tiene clave DIAN. 🔐",
+            "Habilítala ahora: la DIAN enviará un código al correo o celular "
+            "que tiene registrado y tú crearás la contraseña.",
+            f"El enlace es personal y vence en {dias} día(s). No lo compartas.",
+        ],
+        acciones={
+            "activar": {"texto": "🔐 Activar mi cuenta DIAN",
+                        "url": _enlace_activacion(cliente)},
+            "reintentar": {"texto": "↩️ Usar otra cédula"},
+        },
+    )
+
+
+def _respuesta_sin_clave(c: dict, cliente: dict) -> dict:
+    """Decide entre pedir la fecha de expedición o entregar el enlace."""
+    c["cedula"] = cliente["numero_documento"]
+    c["cliente"] = {
+        "numero_documento": cliente["numero_documento"],
+        "tipo_documento": cliente["tipo_documento"],
+    }
+    if not str(cliente.get("fecha_expedicion_doc") or "").strip():
+        c["estado"] = ESPERA_FECHA_EXPEDICION
+        return _respuesta([
+            f"Veo que la cédula {_mascara(cliente['numero_documento'])} está "
+            "registrada, pero aún no tiene clave DIAN. ✅",
+            "Para habilitarla necesito la fecha de expedición del documento "
+            "(la que figura en el RUT). Escríbela como AAAA-MM-DD; por "
+            "ejemplo, 2010-05-20.",
+        ])
+    c["estado"] = SIN_CLAVE
+    return _respuesta_activacion(cliente)
+
+
 def bienvenida() -> dict:
     """Mensaje inicial del asistente (chat recién abierto)."""
     return _respuesta([
@@ -120,6 +178,20 @@ def manejar_mensaje(chat_id: str, texto: str) -> dict:
     if c["estado"] == PROCESANDO:
         return _respuesta(["Estoy procesando tu solicitud, un momento por favor. ⏳"])
 
+    if c["estado"] == ESPERA_FECHA_EXPEDICION:
+        return _manejar_fecha_expedicion(c, texto)
+
+    limpio = (texto or "").replace(" ", "").strip()
+    if c["estado"] == SIN_CLAVE and c.get("cedula"):
+        # Cualquier mensaje vuelve a ofrecer el enlace, salvo que escriba otra
+        # cédula (entonces se identifica de nuevo más abajo).
+        if not (limpio.isdigit() and limpio != c["cedula"]):
+            cliente = auth.buscar_cliente(c["cedula"])
+            if cliente is None:
+                c["estado"] = ESPERA_CEDULA
+                return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
+            return _respuesta_activacion(cliente)
+
     if c["estado"] == ESPERA_OPCION:
         return _respuesta(
             ["Selecciona una opción para continuar, por favor."],
@@ -129,20 +201,19 @@ def manejar_mensaje(chat_id: str, texto: str) -> dict:
     if _es_saludo((texto or "").strip()):
         return bienvenida()
 
-    limpo = (texto or "").replace(" ", "").strip()
-    if not limpo.isdigit():
+    if not limpio.isdigit():
         return _respuesta([
             "El número de cédula debe contener solo dígitos. 📱",
             "Escríbelo nuevamente (ej. 123456789).",
         ])
 
-    cliente = auth.buscar_cliente(limpo)
+    cliente = auth.buscar_cliente(limpio)
     if cliente is None:
         c["estado"] = NO_CLIENTE
-        c["cedula"] = limpo
+        c["cedula"] = limpio
         return _respuesta(
             [
-                f"No encuentro la cédula {_mascara(limpo)} en nuestros registros. 🤔",
+                f"No encuentro la cédula {_mascara(limpio)} en nuestros registros. 🤔",
                 "Si tienes las credenciales del portal DIAN puedes hacer tu "
                 "consulta de forma manual. ¿Cómo prefieres continuar?",
             ],
@@ -153,19 +224,61 @@ def manejar_mensaje(chat_id: str, texto: str) -> dict:
             },
         )
 
+    c["cedula"] = limpio
+    if not _tiene_clave(cliente):
+        return _respuesta_sin_clave(c, cliente)
+
     c["estado"] = ESPERA_OPCION
-    c["cedula"] = limpo
     c["cliente"] = {
         "numero_documento": cliente["numero_documento"],
         "tipo_documento": cliente["tipo_documento"],
     }
     return _respuesta(
         [
-            f"¡Hola! Veo que la cédula {_mascara(limpo)} está registrada. ✅",
+            f"¡Hola! Veo que la cédula {_mascara(limpio)} está registrada. ✅",
             "¿Qué necesitas hacer hoy?",
         ],
         acciones=_opciones_cliente(),
     )
+
+
+def _manejar_fecha_expedicion(c: dict, texto: str) -> dict:
+    """Valida y guarda la fecha de expedición; luego ofrece la activación."""
+    try:
+        fecha = normalizar_fecha_expedicion(texto)
+    except ErrorDIAN as exc:
+        return _respuesta([
+            f"No pude usar esa fecha: {exc}",
+            "Escríbela como AAAA-MM-DD; por ejemplo, 2010-05-20.",
+        ])
+
+    cliente = auth.buscar_cliente(c.get("cedula") or "")
+    if cliente is None:
+        c["estado"] = ESPERA_CEDULA
+        return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
+
+    try:
+        auth.guardar_cliente(
+            cliente["numero_documento"],
+            cliente["tipo_documento"],
+            None,
+            cliente.get("fecha_vencimiento"),
+            contrasena_propia=False,
+            telefono=cliente.get("telefono"),
+            origen_clave=cliente.get("origen_clave"),
+            fecha_expedicion_doc=fecha,
+        )
+    except Exception:  # noqa: BLE001 - nunca exponer detalles internos al chat
+        return _respuesta([
+            "No pude guardar la fecha de expedición. Intenta de nuevo en un "
+            "momento o contacta al administrador.",
+        ])
+
+    cliente = auth.buscar_cliente(c["cedula"])
+    if cliente is None:
+        c["estado"] = ESPERA_CEDULA
+        return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
+    return _respuesta_sin_clave(c, cliente)
 
 
 def _opciones_cliente() -> dict:
@@ -183,6 +296,32 @@ def manejar_accion(chat_id: str, accion: str) -> dict:
 
     if c["estado"] == PROCESANDO:
         return _respuesta(["Estoy procesando tu solicitud, un momento por favor. ⏳"])
+
+    # Cliente registrado sin clave DIAN: ofrecer o refrescar el enlace.
+    if c["estado"] == ESPERA_FECHA_EXPEDICION:
+        return _respuesta([
+            "Necesito la fecha de expedición del documento (la del RUT) para "
+            "continuar. Escríbela como AAAA-MM-DD; por ejemplo, 2010-05-20.",
+        ])
+    if c["estado"] == SIN_CLAVE:
+        if accion == "reintentar":
+            c["estado"] = ESPERA_CEDULA
+            c["cedula"] = None
+            c["cliente"] = None
+            return _respuesta(["Perfecto. Escríbeme tu número de cédula. 📱"])
+        if accion == "activar":
+            cliente = auth.buscar_cliente(c.get("cedula") or "")
+            if cliente is None:
+                c["estado"] = ESPERA_CEDULA
+                return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
+            if _tiene_clave(cliente):
+                c["estado"] = ESPERA_OPCION
+                return _respuesta(
+                    ["Tu cuenta ya está habilitada. ✅ ¿Qué necesitas hacer?"],
+                    acciones=_opciones_cliente(),
+                )
+            return _respuesta_sin_clave(c, cliente)
+        return _respuesta(["Escríbeme tu número de cédula para empezar. 📱"])
 
     # Acciones del flujo "no cliente"
     if c["estado"] == NO_CLIENTE:
@@ -226,6 +365,10 @@ def manejar_accion(chat_id: str, accion: str) -> dict:
     if cliente is None:
         c["estado"] = NO_CLIENTE
         return _respuesta(["Ya no encuentro tu registro. Escríbeme tu cédula de nuevo."])
+    if not _tiene_clave(cliente):
+        # Sin clave guardada no hay nada que descifrar: guiar a la activación.
+        c["opcion"] = None
+        return _respuesta_sin_clave(c, cliente)
     try:
         contrasena = cifrado.descifrar(cliente["contrasena_cifrada"])
     except ValueError:

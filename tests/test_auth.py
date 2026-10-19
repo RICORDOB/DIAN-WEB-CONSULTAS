@@ -1,6 +1,7 @@
 """Pruebas de auth: hash, registro/aprobación, bloqueo/desbloqueo y seed de admin."""
 
 import os
+import sqlite3
 
 import pytest
 
@@ -133,3 +134,77 @@ def test_admin_siembra_no_toca_si_coincide(db, admin):
         ).fetchone()
     assert fila["hash"] == fila2["hash"]
     assert fila["salt"] == fila2["salt"]
+
+
+def _columnas_clientes() -> dict:
+    with auth._conectar() as conn:
+        return {
+            r["name"]: r
+            for r in conn.execute(
+                "PRAGMA table_info(clientes_autorizados)"
+            ).fetchall()
+        }
+
+
+def test_esquema_nuevo_permite_cliente_sin_clave(db):
+    assert _columnas_clientes()["contrasena_cifrada"]["notnull"] == 0
+
+    auth.guardar_cliente("222", "CC", None, None,
+                         fecha_expedicion_doc="2010-05-20")
+    assert auth.cliente_tiene_clave("222") is False
+    assert auth.contar_clientes_sin_clave() == 1
+    cliente = auth.listar_clientes()[0]
+    assert cliente["tiene_clave"] == 0
+    assert cliente["origen_clave"] is None
+    assert cliente["fecha_expedicion_doc"] == "2010-05-20"
+
+
+def test_guardar_cliente_conserva_la_clave_si_llega_vacia(db):
+    auth.guardar_cliente("333", "CC", "cif1", None,
+                         origen_clave=auth.ORIGEN_HABILITADA)
+    assert auth.cliente_tiene_clave("333") is True
+
+    # Re-subida del catálogo sin clave: se conserva la habilitada.
+    auth.guardar_cliente("333", "CC", None, None)
+    cliente = auth.listar_clientes()[0]
+    assert cliente["tiene_clave"] == 1
+    assert cliente["origen_clave"] == auth.ORIGEN_HABILITADA
+    assert auth.buscar_cliente("333")["contrasena_cifrada"] == "cif1"
+
+
+def test_migracion_tabla_vieja_con_clave_not_null():
+    auth.DB_PATH.unlink(missing_ok=True)
+    conn = sqlite3.connect(auth.DB_PATH)
+    conn.execute(
+        """
+        CREATE TABLE clientes_autorizados (
+            numero_documento TEXT PRIMARY KEY,
+            tipo_documento TEXT NOT NULL DEFAULT 'Cédula de Ciudadanía',
+            contrasena_cifrada TEXT NOT NULL,
+            fecha_vencimiento TEXT,
+            telefono TEXT,
+            contrasena_propia INTEGER NOT NULL DEFAULT 1,
+            creado_en TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO clientes_autorizados VALUES "
+        "('111', 'CC', 'cifrado', '2026-01-01', '3001234567', 1, "
+        "'2026-01-01 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    auth.iniciar_db()
+
+    assert _columnas_clientes()["contrasena_cifrada"]["notnull"] == 0
+    cliente = auth.listar_clientes()[0]
+    assert cliente["numero_documento"] == "111"
+    assert cliente["tiene_clave"] == 1
+    assert cliente["origen_clave"] == auth.ORIGEN_MANUAL
+    assert cliente["telefono"] == "3001234567"
+
+    # La tabla reconstruida ya acepta clientes sin clave.
+    auth.guardar_cliente("222", "CC", None, None)
+    assert auth.cliente_tiene_clave("222") is False

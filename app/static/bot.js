@@ -77,6 +77,17 @@
     cont.className = "bot-acciones";
     Object.keys(acciones).forEach(function (clave) {
       var a = acciones[clave];
+      if (a.url) {
+        // Acciones que abren otra página (p. ej. activar la cuenta DIAN).
+        var enlace = document.createElement("a");
+        enlace.className = "bot-boton-accion";
+        enlace.href = a.url;
+        enlace.target = "_blank";
+        enlace.rel = "noopener";
+        enlace.textContent = a.texto || clave;
+        cont.appendChild(enlace);
+        return;
+      }
       var b = document.createElement("button");
       b.type = "button";
       b.className = "bot-boton-accion";

@@ -61,6 +61,7 @@ from . import db
 from . import push
 from . import vencimientos
 from .bot import cifrado, motor, tokens as bot_tokens
+from .habilitacion_api import SesionHabilitacionAPI
 from .recuperacion import PASO_EXITO, ErrorRecuperacion, SesionRecuperacion
 from .recuperacion_api import SesionRecuperacionAPI
 from .runner import DianRunner
@@ -185,6 +186,19 @@ class RecuperacionPasoIn(BaseModel):
     confirmacion: Optional[str] = None
 
 
+class ActivacionIniciarIn(BaseModel):
+    fecha_expedicion: Optional[str] = None
+
+
+class ActivacionPasoIn(BaseModel):
+    sesion_id: str
+    accion: str  # enviar_codigo | reenviar | codigo | clave | cancelar
+    medio: Optional[str] = None
+    codigo: Optional[str] = None
+    contrasena: Optional[str] = None
+    confirmacion: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Utilidades de sesión
 # ---------------------------------------------------------------------------
@@ -243,6 +257,17 @@ async def pag_contadores(sesion: str | None = Cookie(default=None)):
 async def pag_privacidad():
     """Política de privacidad y tratamiento de datos (página pública)."""
     html = (STATIC_DIR / "privacidad.html").read_text(encoding="utf-8")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/activar", response_class=HTMLResponse)
+async def pag_activar():
+    """Página pública para habilitar la cuenta DIAN con el enlace personal.
+
+    El token viaja en el fragmento de consulta y lo lee el JS; nunca se
+    renderiza en el HTML para que no quede en cachés ni en Referer.
+    """
+    html = (STATIC_DIR / "activar.html").read_text(encoding="utf-8")
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
@@ -643,6 +668,8 @@ def _guardar_clave_recuperada(rec: dict, contrasena: str) -> None:
             cifrado.cifrar(contrasena),
             previo.get("fecha_vencimiento"),
             contrasena_propia=False,
+            origen_clave=auth.ORIGEN_RECUPERADA,
+            fecha_expedicion_doc=previo.get("fecha_expedicion_doc"),
         )
     except Exception as exc:  # noqa: BLE001
         # La contraseña YA quedó cambiada en la DIAN; solo falló el guardado local.
@@ -884,6 +911,287 @@ def _limpiar_jobs_viejos() -> None:
             shutil.rmtree(b["dir"], ignore_errors=True)
             _batches.pop(batch_id, None)
     _limpiar_recuperaciones()
+    _limpiar_activaciones()
+
+
+# ---------------------------------------------------------------------------
+# API: activación de la cuenta DIAN desde enlace personal (pública)
+# ---------------------------------------------------------------------------
+# El enlace lo genera el bot o el panel admin; el token firmado identifica al
+# cliente y su fecha de expedición. La barrera de seguridad real es el OTP que
+# la DIAN envía al contacto registrado: el token solo no habilita nada.
+TTL_ACTIVACION = 20 * 60  # segundos de inactividad antes de expirar la sesión
+
+_activaciones: dict[str, dict] = {}
+
+
+def _mascara_doc(numero: str) -> str:
+    digitos = "".join(ch for ch in str(numero or "") if ch.isdigit())
+    return "••••" + digitos[-4:] if len(digitos) > 4 else "••••"
+
+
+def _rate_activacion(request: Request, accion: str, max_req: int) -> None:
+    """Rate limit por IP para las acciones del enlace de activación."""
+    ip = request.client.host if request.client else "desconocida"
+    if not _permitido_rate_limit(f"{ip}:activar:{accion}", max_req):
+        raise HTTPException(
+            status_code=429,
+            detail="Demasiados intentos. Espera un momento e intenta de nuevo.",
+        )
+
+
+async def _cerrar_activacion(sesion_id: str, estado: str, mensaje: str = "") -> None:
+    """Marca el estado final y libera la sesión DIAN asociada."""
+    reg = _activaciones.get(sesion_id)
+    if not reg:
+        return
+    sesion_rec = reg.pop("sesion", None)
+    reg["estado"] = estado
+    if mensaje:
+        reg["mensaje"] = mensaje
+    if sesion_rec:
+        await _cerrar_sesion_segura(sesion_rec)
+
+
+def _activacion_de(sesion_id: str) -> dict:
+    """Sesión de activación o error 404/410 (expirada por inactividad)."""
+    reg = _activaciones.get(sesion_id)
+    if not reg:
+        raise HTTPException(status_code=404, detail="La sesión de activación no existe.")
+    if (
+        time.time() - reg["ultimo_uso"] > TTL_ACTIVACION
+        and reg["estado"] == "activo"
+    ):
+        asyncio.create_task(
+            _cerrar_activacion(sesion_id, "expirado", "La sesión de activación expiró.")
+        )
+        raise HTTPException(
+            status_code=410,
+            detail="La sesión de activación expiró. Abre el enlace otra vez.",
+        )
+    return reg
+
+
+def _activacion_respuesta(reg: dict) -> dict:
+    return {
+        "estado": reg["estado"],
+        "paso": reg["paso"],
+        "mensaje": reg["mensaje"],
+        "medios": reg.get("medios") or [],
+        "aviso": reg.get("error"),
+    }
+
+
+def _limpiar_activaciones() -> None:
+    """Cierra y libera sesiones de activación terminadas o inactivas."""
+    ahora = time.time()
+    for sesion_id in list(_activaciones.keys()):
+        reg = _activaciones[sesion_id]
+        terminada = reg["estado"] in ("exito", "error", "cancelado", "expirado")
+        inactiva = ahora - reg["ultimo_uso"] > TTL_ACTIVACION
+        if (terminada and ahora - reg["ultimo_uso"] > 300) or inactiva:
+            _activaciones.pop(sesion_id, None)
+            sesion_rec = reg.pop("sesion", None)
+            if sesion_rec:
+                asyncio.create_task(_cerrar_sesion_segura(sesion_rec))
+
+
+def _guardar_clave_habilitada(reg: dict, contrasena: str) -> None:
+    """Cifra y guarda la primera clave del cliente (conserva el resto)."""
+    try:
+        previo = auth.buscar_cliente(reg["numero_documento"]) or {}
+        auth.guardar_cliente(
+            reg["numero_documento"],
+            reg["tipo_documento"],
+            cifrado.cifrar(contrasena),
+            previo.get("fecha_vencimiento"),
+            contrasena_propia=False,
+            telefono=previo.get("telefono"),
+            origen_clave=auth.ORIGEN_HABILITADA,
+            # La fecha usada en la habilitación es la más confiable: si el
+            # usuario la corrigió, queda la buena en el catálogo.
+            fecha_expedicion_doc=reg.get("fecha") or previo.get("fecha_expedicion_doc"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # La cuenta YA quedó habilitada en la DIAN; solo falló el guardado local.
+        reg["error"] = (
+            "La cuenta se habilitó en la DIAN, pero no se pudo guardar la clave "
+            f"en el catálogo: {type(exc).__name__}"
+        )
+
+
+def _datos_token_activacion(token: str) -> tuple[str, str, dict, dict]:
+    """Valida el token del enlace y devuelve (numero, tipo, cliente, token)."""
+    datos = bot_tokens.leer_token_activacion(token)
+    if not datos:
+        raise HTTPException(
+            status_code=410,
+            detail="El enlace venció o no es válido. Pide uno nuevo.",
+        )
+    numero = str(datos.get("doc") or "").strip()
+    cliente = auth.buscar_cliente(numero)
+    if cliente is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ese documento ya no está registrado en el catálogo.",
+        )
+    return numero, str(datos.get("tipo") or cliente["tipo_documento"]), cliente, datos
+
+
+@app.get("/api/activar/{token}")
+async def api_activar_info(token: str, request: Request):
+    """Valida el enlace y devuelve los datos públicos del cliente."""
+    _rate_activacion(request, "info", 30)
+    numero, _, cliente, datos = _datos_token_activacion(token)
+    if auth.cliente_tiene_clave(numero):
+        return {
+            "ya_activada": True,
+            "numero_documento": _mascara_doc(numero),
+            "mensaje": "Esta cuenta ya tiene clave DIAN. Si no la recuerdas, usa «Restablecer contraseña».",
+        }
+    fecha = str(cliente.get("fecha_expedicion_doc") or "").strip()
+    if not fecha:
+        fecha = str(datos.get("fecha") or "").strip()
+    return {
+        "ya_activada": False,
+        "numero_documento": _mascara_doc(numero),
+        "tipo_documento": cliente["tipo_documento"],
+        "falta_fecha": not fecha,
+        "mensaje": (
+            ""
+            if fecha
+            else "Necesitamos la fecha de expedición del documento (la del RUT)."
+        ),
+    }
+
+
+@app.post("/api/activar/{token}/iniciar")
+async def api_activar_iniciar(
+    token: str, body: ActivacionIniciarIn, request: Request
+):
+    """Valida documento y fecha en la DIAN y abre la sesión guiada."""
+    _rate_activacion(request, "iniciar", 5)
+    numero, _, cliente, datos = _datos_token_activacion(token)
+    if auth.cliente_tiene_clave(numero):
+        raise HTTPException(
+            status_code=409, detail="Esta cuenta ya tiene clave DIAN."
+        )
+
+    # La fecha que escribe el usuario manda sobre la del catálogo: puede
+    # corregirla si la registrada no coincide con su RUT.
+    fecha = (body.fecha_expedicion or "").strip()
+    if not fecha:
+        fecha = str(cliente.get("fecha_expedicion_doc") or "").strip()
+    if not fecha:
+        fecha = str(datos.get("fecha") or "").strip()
+    if not fecha:
+        raise HTTPException(
+            status_code=400,
+            detail="Escribe la fecha de expedición del documento (AAAA-MM-DD).",
+        )
+
+    # Una sola sesión viva por enlace: la nueva reemplaza a la anterior.
+    for sesion_id, reg in list(_activaciones.items()):
+        if reg["token"] == token and reg["estado"] == "activo":
+            asyncio.create_task(
+                _cerrar_activacion(sesion_id, "cancelado", "Reemplazada por una nueva.")
+            )
+
+    sesion_rec = SesionHabilitacionAPI(cliente["tipo_documento"], numero)
+    try:
+        await sesion_rec.iniciar(fecha)
+    except ErrorRecuperacion as exc:
+        await _cerrar_sesion_segura(sesion_rec)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    sesion_id = uuid.uuid4().hex
+    _activaciones[sesion_id] = {
+        "token": token,
+        "numero_documento": numero,
+        "tipo_documento": cliente["tipo_documento"],
+        # La fecha ya normalizada por la sesión (la que usaría la DIAN).
+        "fecha": getattr(sesion_rec, "fecha_expedicion", "") or fecha,
+        "estado": "activo",
+        "paso": sesion_rec.paso,
+        "mensaje": sesion_rec.mensaje,
+        "medios": list(getattr(sesion_rec, "medios_ui", []) or []),
+        "error": None,
+        "sesion": sesion_rec,
+        "creado": time.time(),
+        "ultimo_uso": time.time(),
+    }
+    out = _activacion_respuesta(_activaciones[sesion_id])
+    out["sesion_id"] = sesion_id
+    return out
+
+
+@app.post("/api/activar/{token}/paso")
+async def api_activar_paso(token: str, body: ActivacionPasoIn, request: Request):
+    """Ejecuta un paso del flujo de habilitación sobre la sesión viva."""
+    _rate_activacion(request, "paso", 30)
+    reg = _activacion_de(body.sesion_id)
+    if reg["token"] != token:
+        raise HTTPException(status_code=404, detail="La sesión no corresponde a este enlace.")
+    reg["ultimo_uso"] = time.time()
+
+    if body.accion == "cancelar":
+        await _cerrar_activacion(body.sesion_id, "cancelado", "Activación cancelada.")
+        return _activacion_respuesta(reg)
+
+    sesion_rec = reg.get("sesion")
+    if reg["estado"] != "activo" or not sesion_rec:
+        raise HTTPException(
+            status_code=409, detail="La sesión de activación no está lista."
+        )
+
+    accion = body.accion
+    try:
+        if accion == "enviar_codigo":
+            _rate_activacion(request, "enviar_codigo", 5)
+            await sesion_rec.enviar_codigo(body.medio)
+        elif accion == "reenviar":
+            _rate_activacion(request, "enviar_codigo", 5)
+            await sesion_rec.reenviar_codigo()
+        elif accion == "codigo":
+            _rate_activacion(request, "codigo", 10)
+            codigo = (body.codigo or "").strip()
+            if not codigo or len(codigo) > 20:
+                raise HTTPException(status_code=400, detail="Escribe el código recibido.")
+            await sesion_rec.validar_codigo(codigo)
+        elif accion == "clave":
+            _rate_activacion(request, "clave", 5)
+            contrasena = body.contrasena or ""
+            confirmacion = body.confirmacion or ""
+            if not contrasena or len(contrasena) > 64:
+                raise HTTPException(
+                    status_code=400, detail="Escribe la nueva contraseña."
+                )
+            if contrasena != confirmacion:
+                raise HTTPException(
+                    status_code=400, detail="Las contraseñas no coinciden."
+                )
+            await sesion_rec.definir_clave(contrasena, confirmacion)
+        else:
+            raise HTTPException(status_code=400, detail="Acción no reconocida.")
+    except HTTPException:
+        raise
+    except ErrorRecuperacion as exc:
+        # Error controlado: la sesión sigue viva. Pudo retroceder de paso
+        # (p. ej. un OTP rechazado vuelve a «codigo»), así que se sincroniza.
+        reg["paso"] = sesion_rec.paso
+        reg["mensaje"] = str(exc)
+        out = _activacion_respuesta(reg)
+        out["detail"] = str(exc)
+        return JSONResponse(status_code=400, content=out)
+
+    reg["paso"] = sesion_rec.paso
+    reg["mensaje"] = sesion_rec.mensaje
+
+    if accion == "clave" and sesion_rec.paso == PASO_EXITO:
+        _guardar_clave_habilitada(reg, body.contrasena or "")
+        await _cerrar_activacion(body.sesion_id, "exito", sesion_rec.mensaje)
+
+    return _activacion_respuesta(reg)
 
 
 # ---------------------------------------------------------------------------
@@ -1150,6 +1458,8 @@ async def api_admin_clientes_subir(archivo: UploadFile = File(...),
             c["numero_documento"], c["tipo_documento"],
             cifrado_texto, c.get("fecha_vencimiento"),
             telefono=c.get("telefono"),
+            origen_clave=auth.ORIGEN_MANUAL,
+            fecha_expedicion_doc=c.get("fecha_expedicion_doc"),
         )
         if res["nuevo"]:
             cargados += 1
@@ -1182,6 +1492,37 @@ async def api_admin_clientes_eliminar(cedula: str,
         return auth.eliminar_cliente(cedula, admin)
     except auth.AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/admin/clientes/{cedula}/activacion")
+async def api_admin_cliente_activacion(cedula: str,
+                                       sesion: str | None = Cookie(default=None)):
+    """Genera el enlace personal para que el cliente cree su clave DIAN."""
+    _requiere_admin(sesion)
+    numero = (cedula or "").strip()
+    cliente = auth.buscar_cliente(numero)
+    if cliente is None:
+        raise HTTPException(status_code=404, detail="Ese cliente no está en el catálogo.")
+    if auth.cliente_tiene_clave(numero):
+        raise HTTPException(
+            status_code=409,
+            detail="Ese cliente ya tiene clave DIAN; usa «Restablecer contraseña» si la olvidó.",
+        )
+    fecha = str(cliente.get("fecha_expedicion_doc") or "").strip()
+    if not fecha:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "El cliente no tiene fecha de expedición registrada. "
+                "Agrégala en el catálogo antes de generar el enlace."
+            ),
+        )
+    token = bot_tokens.emitir_token_activacion(numero, cliente["tipo_documento"], fecha)
+    return {
+        "enlace": f"/activar?t={token}",
+        "numero_documento": _mascara_doc(numero),
+        "expira_dias": max(1, bot_tokens.DURACION_ACTIVACION_SEG // 86400),
+    }
 
 
 # ---------------------------------------------------------------------------

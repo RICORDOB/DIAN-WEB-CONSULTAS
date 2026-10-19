@@ -32,6 +32,7 @@ import sys
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from cryptography.hazmat.primitives import padding as relleno
@@ -46,6 +47,11 @@ from herramientas.comun import copiar_portapapeles, generar_clave_segura  # noqa
 API_BASE = "https://api.dian.gov.co"
 RUTA_TOKEN = "/identidad/sts/v1/tokens/guest"
 RUTA_USUARIOS = "/identidadadministracion/auth/v1/usuarios"
+# Habilitación de cuenta («Usuario Nuevo»): endpoint propio del SPA y servicio
+# 2FA donde el portal valida el OTP antes de crear la contraseña.
+RUTA_CUENTAS = "/identidadadministracion/v1/cuentausuarios"
+OTP_BASE = "https://apiazure.dian.gov.co"
+RUTA_OTP = "/identidad/2fa/v1/otps"
 
 TIPOS_DOCUMENTO = {
     "cc": "CC",
@@ -67,6 +73,10 @@ _TIPOS_NUMERICOS = {"CC", "CE", "CD", "TI", "RC", "TE"}
 
 class ErrorDIAN(Exception):
     """Error devuelto por los servicios de la DIAN o de red."""
+
+
+class CodigoOTPInvalido(ErrorDIAN):
+    """El código de seguridad no existe, ya se usó o venció."""
 
 
 def base64_utf8(texto: str) -> str:
@@ -97,6 +107,29 @@ def enmascarar(valor: str) -> str:
     if len(valor) > 5:
         return f"{valor[:3]}***{valor[-2:]}"
     return "***"
+
+
+def normalizar_fecha_expedicion(texto: str) -> str:
+    """Valida la fecha de expedición y la devuelve en el formato de la DIAN.
+
+    El portal envía ``yyyy-MM-dd`` (datePipe). Se aceptan también ``dd/mm/aaaa``
+    y ``aaaa/mm/dd`` para no obligar al operador a recordar el formato.
+    """
+    limpio = (texto or "").strip()
+    for formato in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            fecha = datetime.strptime(limpio, formato).date()
+        except ValueError:
+            continue
+        if fecha > date.today():
+            raise ErrorDIAN("La fecha de expedición no puede ser futura.")
+        if fecha.year < 1900:
+            raise ErrorDIAN("La fecha de expedición no parece válida.")
+        return fecha.isoformat()
+    raise ErrorDIAN(
+        "La fecha de expedición no es válida. Usa el formato AAAA-MM-DD "
+        "(por ejemplo, 2015-03-28)."
+    )
 
 
 class ClienteRecuperacionDIAN:
@@ -208,6 +241,105 @@ class ClienteRecuperacionDIAN:
                 "otp": codigo,
                 "medioRecuperacion": {"tipo": medio.get("tipo"), "valor": medio.get("valor")},
                 "generarFirma": "true" if generar_firma else "false",
+            },
+        )
+
+    # --- habilitación de cuenta (primera clave) ---------------------------
+
+    def consultar_habilitacion(
+        self, tipo: str, numero: str, fecha_expedicion: str
+    ) -> dict:
+        """Paso 1 del portal: valida el documento y devuelve los medios.
+
+        Normaliza la respuesta a ``{tipoRta, mensaje, datos}``:
+          * ``tipoRta``: "1" ok, "2" no encontrado, "3" ya tiene cuenta.
+          * ``datos``: ``mediosRecuperacion``, ``tieneRut`` y
+            ``tieneFirmaElectronica``.
+
+        El servicio devuelve ``codigoRta`` y ``datos`` como bloques hermanos;
+        se acepta también ``datos`` dentro de ``codigoRta`` por si cambia.
+        """
+        respuesta = self._post(
+            RUTA_CUENTAS,
+            {
+                "operacion": {"codigo": "1"},
+                "usuariocuenta": {
+                    "datosPwd": {},
+                    "persona": {
+                        "tipoDocumento": tipo,
+                        "numDocumento": numero,
+                        "fechaExpedicionDoc": fecha_expedicion,
+                    },
+                },
+            },
+        )
+        codigo_rta = respuesta.get("codigoRta") or {}
+        datos = respuesta.get("datos")
+        if not isinstance(datos, dict):
+            datos = codigo_rta.get("datos")
+        return {
+            "tipoRta": str(
+                codigo_rta.get("tipoRta", respuesta.get("tipoRta", ""))
+            ).strip(),
+            "mensaje": codigo_rta.get("mensaje") or respuesta.get("mensaje"),
+            "datos": datos if isinstance(datos, dict) else {},
+        }
+
+    def validar_codigo_otp(self, tipo: str, numero: str, codigo: str) -> dict:
+        """Valida el OTP contra el servicio 2FA del portal (sin autenticación).
+
+        El portal lo usa solo como control de interfaz; la validación
+        definitiva ocurre al crear la cuenta. Se mantiene para dar respuesta
+        inmediata al usuario en vez de esperar al último paso.
+        """
+        url = f"{OTP_BASE}{RUTA_OTP}/{quote(codigo.strip(), safe='')}"
+        try:
+            respuesta = self._http.get(
+                url,
+                params={"userId": f"{tipo}-{numero}"},
+                timeout=self._timeout,
+            )
+        except requests.RequestException as exc:
+            raise ErrorDIAN(f"No se pudo validar el código con la DIAN: {exc}") from exc
+        if respuesta.status_code in (401, 404):
+            raise CodigoOTPInvalido("El código no es válido o ya venció.")
+        datos = self._datos(respuesta)
+        estado = datos.get("estado")
+        if estado is None and isinstance(datos.get("datos"), dict):
+            estado = datos["datos"].get("estado")
+        if str(estado or "").upper() != "DISPONIBLE":
+            raise CodigoOTPInvalido("El código ya fue usado o no está disponible.")
+        return datos
+
+    def crear_cuenta_habilitada(
+        self,
+        tipo: str,
+        numero: str,
+        fecha_expedicion: str,
+        clave: str,
+        codigo: str,
+    ) -> dict:
+        """Paso 2 del portal: crea la contraseña y habilita la cuenta.
+
+        A diferencia de la recuperación, este flujo envía las contraseñas en
+        Base64 (``utf8ToBase64`` del SPA), no con el cifrado AES del portal.
+        """
+        return self._post(
+            RUTA_CUENTAS,
+            {
+                "operacion": {"codigo": "2"},
+                "usuariocuenta": {
+                    "datosPwd": {
+                        "contrasenaNuevaUsuario": base64_utf8(clave),
+                        "contrasenaConfirmacionUsuario": base64_utf8(clave),
+                    },
+                    "persona": {
+                        "tipoDocumento": tipo,
+                        "numDocumento": numero,
+                        "fechaExpedicionDoc": fecha_expedicion,
+                    },
+                },
+                "otp": codigo,
             },
         )
 

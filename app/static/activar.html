@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0c1f3f" />
+  <meta name="robots" content="noindex" />
+  <link rel="stylesheet" href="/assets/styles.css?v=20261019r2" />
+  <link rel="stylesheet" href="/assets/activar.css?v=20261019r1" />
+  <title>Activa tu cuenta DIAN — ExoRenta</title>
+</head>
+<body>
+  <div class="card activar">
+    <h1>Activa tu cuenta DIAN</h1>
+    <p class="subtitulo" id="documento">Validando el enlace…</p>
+
+    <div class="pasos-indicador" aria-hidden="true">
+      <span id="ind-1"></span><span id="ind-2"></span><span id="ind-3"></span><span id="ind-4"></span>
+    </div>
+
+    <section id="paso-cargando">
+      <p class="pista">Un momento, estamos validando tu enlace…</p>
+    </section>
+
+    <section id="paso-error" class="oculto">
+      <div class="mensaje-error" id="error-enlace"></div>
+      <a class="boton" href="/">Ir a ExoRenta</a>
+    </section>
+
+    <section id="paso-fecha" class="oculto">
+      <p>Para habilitar tu cuenta necesitamos la fecha de expedición del documento (la que figura en tu RUT).</p>
+      <form class="formulario" id="form-fecha">
+        <label for="fecha">Fecha de expedición</label>
+        <input type="date" id="fecha" required />
+        <button class="boton" type="submit" id="boton-fecha">Continuar</button>
+      </form>
+      <div id="error-fecha" class="mensaje-error oculto"></div>
+    </section>
+
+    <section id="paso-medios" class="oculto">
+      <p id="texto-medios">La DIAN enviará un código al contacto registrado en tu cuenta. Elige a dónde:</p>
+      <div class="lista-medios" id="lista-medios"></div>
+      <button class="boton" id="boton-enviar" type="button">Enviar código</button>
+      <div id="error-medios" class="mensaje-error oculto"></div>
+    </section>
+
+    <section id="paso-codigo" class="oculto">
+      <p id="texto-codigo">Escribe el código que llegó al contacto registrado.</p>
+      <form class="formulario" id="form-codigo">
+        <label for="codigo">Código recibido</label>
+        <input type="text" id="codigo" inputmode="numeric" autocomplete="one-time-code"
+               maxlength="20" placeholder="Código de la DIAN" required />
+        <button class="boton" type="submit" id="boton-codigo">Validar código</button>
+      </form>
+      <div class="acciones-fila">
+        <button class="boton secundario" id="boton-reenviar" type="button">Reenviar código</button>
+        <button class="boton secundario" id="boton-volver" type="button">Cambiar contacto</button>
+      </div>
+      <div id="error-codigo" class="mensaje-error oculto"></div>
+    </section>
+
+    <section id="paso-clave" class="oculto">
+      <p>Crea la contraseña de tu cuenta DIAN. La usarás en cada consulta de tu información exógena.</p>
+      <form class="formulario" id="form-clave">
+        <label for="clave">Nueva contraseña</label>
+        <input type="password" id="clave" autocomplete="new-password" required />
+        <label for="clave2">Confirmar contraseña</label>
+        <input type="password" id="clave2" autocomplete="new-password" required />
+        <ul class="politica-clave">
+          <li>Entre 6 y 15 caracteres.</li>
+          <li>Al menos 2 letras, 1 número y 1 carácter especial (#*()$%&amp;/\,¿?-_@¡!+.=).</li>
+          <li>Combinar mayúsculas y minúsculas. Sin acentos ni espacios.</li>
+          <li>No repetir el mismo carácter 6 veces seguidas.</li>
+        </ul>
+        <label class="pista acepto">
+          <input type="checkbox" id="acepto" />
+          He leído y acepto la <a href="/privacidad" target="_blank" rel="noopener">política de tratamiento de datos</a>.
+        </label>
+        <button class="boton ok" type="submit" id="boton-clave">Crear contraseña</button>
+      </form>
+      <div id="error-clave" class="mensaje-error oculto"></div>
+    </section>
+
+    <section id="paso-exito" class="oculto">
+      <div class="mensaje-ok" id="exito-texto">¡Cuenta habilitada correctamente!</div>
+      <p class="pista">
+        Guarda la contraseña en un lugar seguro: la DIAN la pedirá cada vez que
+        consultes tu información. Si la pierdes, podrás restablecerla con el
+        correo o celular registrados.
+      </p>
+      <div id="aviso-guardado" class="mensaje-error oculto"></div>
+      <a class="boton" href="/">Ir a ExoRenta</a>
+    </section>
+  </div>
+
+  <footer class="pie">
+    Desarrollado por Ricardo Cordoba y Ana Maria Rozo, dueños de la firma: Contador a tu servicio.<br />
+    &copy; 2026 Contador a tu servicio &mdash; Todos los derechos reservados. |
+    <a href="/privacidad">Política de Privacidad</a>
+  </footer>
+
+  <script src="/assets/activar.js?v=20261019r1"></script>
+</body>
+</html>

@@ -41,6 +41,12 @@ ESTADO_RUNNING = "running"
 ESTADO_DONE = "done"
 ESTADO_ERROR = "error"
 
+# Origen de la clave DIAN guardada en el catálogo de clientes.
+ORIGEN_MANUAL = "manual"          # cargada por el admin (xlsx)
+ORIGEN_RECUPERADA = "recuperada"  # restablecida por el flujo de recuperación
+ORIGEN_HABILITADA = "habilitada"  # creada con el flujo «Usuario Nuevo»
+_ORIGENES_VALIDOS = {ORIGEN_MANUAL, ORIGEN_RECUPERADA, ORIGEN_HABILITADA}
+
 # Rutas de almacenamiento (configurables por variables de entorno en despliegue)
 _data_dir = Path(os.environ.get("APP_DATA_DIR", "data"))
 _data_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +107,83 @@ def leer_token(token: str) -> dict | None:
 def _conectar():
     """Conexión al backend activo: Turso si hay credenciales, si no sqlite3 local."""
     return _db.conectar()
+
+
+_SCHEMA_CLIENTES = """
+    CREATE TABLE IF NOT EXISTS clientes_autorizados (
+        numero_documento TEXT PRIMARY KEY,
+        tipo_documento TEXT NOT NULL DEFAULT 'Cédula de Ciudadanía',
+        contrasena_cifrada TEXT,
+        fecha_vencimiento TEXT,
+        telefono TEXT,
+        contrasena_propia INTEGER NOT NULL DEFAULT 1,
+        origen_clave TEXT,
+        fecha_expedicion_doc TEXT,
+        creado_en TEXT NOT NULL
+    )
+"""
+
+
+def _migrar_clientes_clave_opcional(conn) -> None:
+    """Permite clientes sin clave y agrega el origen y la fecha de expedición.
+
+    SQLite y Turso no eliminan ``NOT NULL`` con ``ALTER TABLE``: si la tabla
+    vieja todavía exige ``contrasena_cifrada`` hay que reconstruirla. Todo
+    ocurre dentro de la transacción de ``iniciar_db`` (atómico y repetible).
+    """
+    info = conn.execute("PRAGMA table_info(clientes_autorizados)").fetchall()
+    columnas = {r["name"] for r in info}
+    clave_obligatoria = False
+    for r in info:
+        if r["name"] != "contrasena_cifrada":
+            continue
+        try:
+            clave_obligatoria = bool(r["notnull"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            clave_obligatoria = False
+
+    if not clave_obligatoria:
+        if "origen_clave" not in columnas:
+            conn.execute(
+                "ALTER TABLE clientes_autorizados ADD COLUMN origen_clave TEXT"
+            )
+        if "fecha_expedicion_doc" not in columnas:
+            conn.execute(
+                "ALTER TABLE clientes_autorizados ADD COLUMN fecha_expedicion_doc TEXT"
+            )
+        return
+
+    # Filas existentes: las cargadas por el admin (propia=1) son manuales; las
+    # aportadas por el propio cliente, recuperadas.
+    origen_select = (
+        "origen_clave"
+        if "origen_clave" in columnas
+        else "CASE WHEN contrasena_cifrada IS NULL "
+        "OR TRIM(contrasena_cifrada) = '' THEN NULL "
+        "WHEN COALESCE(contrasena_propia, 1) = 1 THEN 'manual' "
+        "ELSE 'recuperada' END"
+    )
+    fecha_select = (
+        "fecha_expedicion_doc" if "fecha_expedicion_doc" in columnas else "NULL"
+    )
+    conn.execute("DROP TABLE IF EXISTS clientes_autorizados_previo")
+    conn.execute(
+        "ALTER TABLE clientes_autorizados RENAME TO clientes_autorizados_previo"
+    )
+    conn.execute(_SCHEMA_CLIENTES)
+    conn.execute(
+        f"""
+        INSERT INTO clientes_autorizados
+            (numero_documento, tipo_documento, contrasena_cifrada,
+             fecha_vencimiento, telefono, contrasena_propia, origen_clave,
+             fecha_expedicion_doc, creado_en)
+        SELECT numero_documento, tipo_documento, contrasena_cifrada,
+               fecha_vencimiento, telefono, COALESCE(contrasena_propia, 1),
+               {origen_select}, {fecha_select}, creado_en
+        FROM clientes_autorizados_previo
+        """
+    )
+    conn.execute("DROP TABLE clientes_autorizados_previo")
 
 
 def iniciar_db() -> None:
@@ -177,28 +260,19 @@ def iniciar_db() -> None:
         )
         # Clientes autorizados para el chat bot: credenciales DIAN cifradas.
         # numero_documento es la PK; contrasena_cifrada guarda la contraseña con
-        # Fernet (app/bot/cifrado.py). contrasena_propia=1 -> credencial cargada
-        # por el admin desde clientes_dian.xlsx; contrasena_propia=0 -> la aportó
-        # el propio cliente durante el chat (futuro flujo manual).
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS clientes_autorizados (
-                numero_documento TEXT PRIMARY KEY,
-                tipo_documento TEXT NOT NULL DEFAULT 'Cédula de Ciudadanía',
-                contrasena_cifrada TEXT NOT NULL,
-                fecha_vencimiento TEXT,
-                telefono TEXT,
-                contrasena_propia INTEGER NOT NULL DEFAULT 1,
-                creado_en TEXT NOT NULL
-            )
-            """
-        )
+        # Fernet (app/bot/cifrado.py). Puede ser NULL: cliente sin clave, que se
+        # habilita con el flujo «Usuario Nuevo». contrasena_propia=1 -> credencial
+        # cargada por el admin desde clientes_dian.xlsx; contrasena_propia=0 -> la
+        # aportó el propio cliente (recuperación o habilitación).
+        conn.execute(_SCHEMA_CLIENTES)
         # Migración: teléfono de contacto del cliente (columna del xlsx; se usa
         # para los avisos de vencimiento y un futuro canal de mensajería).
         cols = {r["name"] for r in conn.execute(
             "PRAGMA table_info(clientes_autorizados)").fetchall()}
         if "telefono" not in cols:
             conn.execute("ALTER TABLE clientes_autorizados ADD COLUMN telefono TEXT")
+        # Migración: clave opcional + origen + fecha de expedición del documento.
+        _migrar_clientes_clave_opcional(conn)
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
@@ -582,16 +656,32 @@ def estadisticas_completas() -> dict:
 # Clientes autorizados (chat bot)
 # ---------------------------------------------------------------------------
 def guardar_cliente(numero_documento: str, tipo_documento: str,
-                    contrasena_cifrada: str, fecha_vencimiento: str | None,
+                    contrasena_cifrada: str | None, fecha_vencimiento: str | None,
                     contrasena_propia: bool = True,
-                    telefono: str | None = None) -> dict:
+                    telefono: str | None = None,
+                    origen_clave: str | None = None,
+                    fecha_expedicion_doc: str | None = None) -> dict:
     """Upsert de un cliente autorizado. Devuelve si era nuevo o se actualizó.
 
-    El teléfono es opcional y se conserva el anterior si llega vacío
-    (COALESCE), para que re-subir el catálogo sin esa columna no lo borre.
+    ``contrasena_cifrada=None`` registra un cliente sin clave (para habilitarla
+    después). Al re-subir el catálogo sin clave se conserva la existente
+    (COALESCE), igual que el teléfono, para no borrar una clave ya habilitada.
     """
     numero = str(numero_documento).strip()
     tel = str(telefono).strip() if telefono not in (None, "") else None
+    clave = (
+        str(contrasena_cifrada).strip()
+        if contrasena_cifrada not in (None, "")
+        else None
+    )
+    if origen_clave not in _ORIGENES_VALIDOS:
+        origen_clave = None
+    if clave and origen_clave is None:
+        origen_clave = ORIGEN_MANUAL if contrasena_propia else ORIGEN_RECUPERADA
+    fecha_exp = (
+        str(fecha_expedicion_doc).strip() if fecha_expedicion_doc not in (None, "")
+        else None
+    )
     with _conectar() as conn:
         previo = conn.execute(
             "SELECT 1 FROM clientes_autorizados WHERE numero_documento = ?", (numero,)
@@ -600,21 +690,49 @@ def guardar_cliente(numero_documento: str, tipo_documento: str,
             """
             INSERT INTO clientes_autorizados
                 (numero_documento, tipo_documento, contrasena_cifrada,
-                 fecha_vencimiento, telefono, contrasena_propia, creado_en)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 fecha_vencimiento, telefono, contrasena_propia, origen_clave,
+                 fecha_expedicion_doc, creado_en)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(numero_documento) DO UPDATE SET
                 tipo_documento = excluded.tipo_documento,
-                contrasena_cifrada = excluded.contrasena_cifrada,
+                contrasena_cifrada = COALESCE(excluded.contrasena_cifrada,
+                                              clientes_autorizados.contrasena_cifrada),
                 fecha_vencimiento = excluded.fecha_vencimiento,
                 telefono = COALESCE(excluded.telefono,
                                     clientes_autorizados.telefono),
-                contrasena_propia = excluded.contrasena_propia
+                contrasena_propia = CASE
+                    WHEN excluded.contrasena_cifrada IS NULL
+                        THEN clientes_autorizados.contrasena_propia
+                    ELSE excluded.contrasena_propia
+                END,
+                origen_clave = COALESCE(excluded.origen_clave,
+                                        clientes_autorizados.origen_clave),
+                fecha_expedicion_doc = COALESCE(
+                    excluded.fecha_expedicion_doc,
+                    clientes_autorizados.fecha_expedicion_doc)
             """,
-            (numero, tipo_documento, contrasena_cifrada, fecha_vencimiento,
-             tel, 1 if contrasena_propia else 0,
+            (numero, tipo_documento, clave, fecha_vencimiento, tel,
+             1 if (clave and contrasena_propia) else 0, origen_clave, fecha_exp,
              time.strftime("%Y-%m-%d %H:%M:%S")),
         )
-    return {"numero_documento": numero, "nuevo": previo is None}
+    return {
+        "numero_documento": numero,
+        "nuevo": previo is None,
+        "tiene_clave": clave is not None,
+    }
+
+
+def cliente_tiene_clave(numero_documento: str) -> bool:
+    """True si el cliente está en el catálogo y ya tiene clave guardada."""
+    numero = str(numero_documento).strip()
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM clientes_autorizados WHERE numero_documento = ? "
+            "AND contrasena_cifrada IS NOT NULL "
+            "AND TRIM(contrasena_cifrada) <> ''",
+            (numero,),
+        ).fetchone()
+    return row is not None
 
 
 def buscar_cliente(numero_documento: str) -> dict | None:
@@ -632,7 +750,11 @@ def listar_clientes(limite: int = 1000) -> list[dict]:
     with _conectar() as conn:
         rows = conn.execute(
             "SELECT numero_documento, tipo_documento, fecha_vencimiento, "
-            "       telefono, contrasena_propia, creado_en "
+            "       telefono, contrasena_propia, origen_clave, "
+            "       fecha_expedicion_doc, creado_en, "
+            "       CASE WHEN contrasena_cifrada IS NOT NULL "
+            "                 AND TRIM(contrasena_cifrada) <> '' "
+            "            THEN 1 ELSE 0 END AS tiene_clave "
             "FROM clientes_autorizados ORDER BY creado_en DESC LIMIT ?",
             (limite,),
         ).fetchall()
@@ -642,6 +764,16 @@ def listar_clientes(limite: int = 1000) -> list[dict]:
 def contar_clientes() -> int:
     with _conectar() as conn:
         row = conn.execute("SELECT COUNT(*) FROM clientes_autorizados").fetchone()
+    return int(row[0]) if row else 0
+
+
+def contar_clientes_sin_clave() -> int:
+    """Clientes del catálogo que todavía no tienen clave DIAN guardada."""
+    with _conectar() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM clientes_autorizados "
+            "WHERE contrasena_cifrada IS NULL OR TRIM(contrasena_cifrada) = ''"
+        ).fetchone()
     return int(row[0]) if row else 0
 
 
