@@ -187,11 +187,18 @@ def iniciar_db() -> None:
                 tipo_documento TEXT NOT NULL DEFAULT 'Cédula de Ciudadanía',
                 contrasena_cifrada TEXT NOT NULL,
                 fecha_vencimiento TEXT,
+                telefono TEXT,
                 contrasena_propia INTEGER NOT NULL DEFAULT 1,
                 creado_en TEXT NOT NULL
             )
             """
         )
+        # Migración: teléfono de contacto del cliente (columna del xlsx; se usa
+        # para los avisos de vencimiento y un futuro canal de mensajería).
+        cols = {r["name"] for r in conn.execute(
+            "PRAGMA table_info(clientes_autorizados)").fetchall()}
+        if "telefono" not in cols:
+            conn.execute("ALTER TABLE clientes_autorizados ADD COLUMN telefono TEXT")
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
@@ -445,6 +452,15 @@ def listar_suscripciones(usuario: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def listar_usuarios_suscritos() -> list[str]:
+    """Usuarios con al menos una suscripción push activa."""
+    with _conectar() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT usuario FROM push_suscripciones"
+        ).fetchall()
+    return [r["usuario"] for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Consultas (historial para el dashboard del desarrollador)
 # ---------------------------------------------------------------------------
@@ -567,9 +583,15 @@ def estadisticas_completas() -> dict:
 # ---------------------------------------------------------------------------
 def guardar_cliente(numero_documento: str, tipo_documento: str,
                     contrasena_cifrada: str, fecha_vencimiento: str | None,
-                    contrasena_propia: bool = True) -> dict:
-    """Upsert de un cliente autorizado. Devuelve si era nuevo o se actualizó."""
+                    contrasena_propia: bool = True,
+                    telefono: str | None = None) -> dict:
+    """Upsert de un cliente autorizado. Devuelve si era nuevo o se actualizó.
+
+    El teléfono es opcional y se conserva el anterior si llega vacío
+    (COALESCE), para que re-subir el catálogo sin esa columna no lo borre.
+    """
     numero = str(numero_documento).strip()
+    tel = str(telefono).strip() if telefono not in (None, "") else None
     with _conectar() as conn:
         previo = conn.execute(
             "SELECT 1 FROM clientes_autorizados WHERE numero_documento = ?", (numero,)
@@ -578,16 +600,18 @@ def guardar_cliente(numero_documento: str, tipo_documento: str,
             """
             INSERT INTO clientes_autorizados
                 (numero_documento, tipo_documento, contrasena_cifrada,
-                 fecha_vencimiento, contrasena_propia, creado_en)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 fecha_vencimiento, telefono, contrasena_propia, creado_en)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(numero_documento) DO UPDATE SET
                 tipo_documento = excluded.tipo_documento,
                 contrasena_cifrada = excluded.contrasena_cifrada,
                 fecha_vencimiento = excluded.fecha_vencimiento,
+                telefono = COALESCE(excluded.telefono,
+                                    clientes_autorizados.telefono),
                 contrasena_propia = excluded.contrasena_propia
             """,
             (numero, tipo_documento, contrasena_cifrada, fecha_vencimiento,
-             1 if contrasena_propia else 0,
+             tel, 1 if contrasena_propia else 0,
              time.strftime("%Y-%m-%d %H:%M:%S")),
         )
     return {"numero_documento": numero, "nuevo": previo is None}
@@ -608,7 +632,7 @@ def listar_clientes(limite: int = 1000) -> list[dict]:
     with _conectar() as conn:
         rows = conn.execute(
             "SELECT numero_documento, tipo_documento, fecha_vencimiento, "
-            "       contrasena_propia, creado_en "
+            "       telefono, contrasena_propia, creado_en "
             "FROM clientes_autorizados ORDER BY creado_en DESC LIMIT ?",
             (limite,),
         ).fetchall()

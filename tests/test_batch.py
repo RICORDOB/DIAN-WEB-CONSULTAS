@@ -44,6 +44,34 @@ def test_cargar_filas_error_si_faltan_columnas(tmp_path):
         batch_mod.cargar_filas(ruta)
 
 
+def test_cargar_clientes_con_telefono_opcional(tmp_path):
+    ruta = tmp_path / "clientes.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["tipo_documento", "numero_documento", "contrasena",
+               "fecha_vencimiento", "telefono"])
+    ws.append(["Cédula de Ciudadanía", 111, "c1", "2026-10-22", 3001234567])
+    ws.append(["Cédula de Ciudadanía", "222", "c2", "2026-10-23", 3007654321.0])
+    ws.append(["Cédula de Ciudadanía", "333", "c3", "2026-10-24", None])
+    wb.save(ruta)
+    clientes = batch_mod.cargar_clientes(ruta)
+    assert clientes[0]["telefono"] == "3001234567"
+    # Un número de Excel (float) se limpia a texto sin el '.0'
+    assert clientes[1]["telefono"] == "3007654321"
+    assert clientes[2]["telefono"] is None
+
+
+def test_cargar_clientes_sin_columna_telefono(tmp_path):
+    ruta = tmp_path / "sin_tel.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["tipo_documento", "numero_documento", "contrasena"])
+    ws.append(["Cédula de Ciudadanía", "111", "c1"])
+    wb.save(ruta)
+    clientes = batch_mod.cargar_clientes(ruta)
+    assert clientes[0]["telefono"] is None
+
+
 def test_guardar_estado_escribe_columna(tmp_path):
     ruta = _excel(tmp_path / "c.xlsx", [{"numero_documento": "111", "contrasena": "c1"}])
     batch_mod.guardar_estado(ruta, 2, "ok")

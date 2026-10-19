@@ -778,7 +778,7 @@ function iniciarDev() {
         tbodyClientes.innerHTML = "";
         if (!data.clientes.length) {
           const fila = document.createElement("tr");
-          fila.innerHTML = '<td colspan="5">Sin clientes en el catálogo todavía. Sube un archivo .xlsx para comenzar.</td>';
+          fila.innerHTML = '<td colspan="6">Sin clientes en el catálogo todavía. Sube un archivo .xlsx para comenzar.</td>';
           tbodyClientes.appendChild(fila);
           return;
         }
@@ -788,6 +788,7 @@ function iniciarDev() {
             "<td>" + escapar(c.numero_documento) + "</td>" +
             "<td>" + escapar(c.tipo_documento || "") + "</td>" +
             "<td>" + escapar(c.fecha_vencimiento || "—") + "</td>" +
+            "<td>" + escapar(c.telefono || "—") + "</td>" +
             "<td>" + escapar(c.creado_en || "") + "</td>" +
             "<td></td>";
           fila.lastElementChild.appendChild(btnAccion(

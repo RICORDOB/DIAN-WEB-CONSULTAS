@@ -59,6 +59,7 @@ from . import auth
 from . import batch as batch_mod
 from . import db
 from . import push
+from . import vencimientos
 from .bot import cifrado, motor, tokens as bot_tokens
 from .recuperacion import PASO_EXITO, ErrorRecuperacion, SesionRecuperacion
 from .recuperacion_api import SesionRecuperacionAPI
@@ -1148,6 +1149,7 @@ async def api_admin_clientes_subir(archivo: UploadFile = File(...),
         res = auth.guardar_cliente(
             c["numero_documento"], c["tipo_documento"],
             cifrado_texto, c.get("fecha_vencimiento"),
+            telefono=c.get("telefono"),
         )
         if res["nuevo"]:
             cargados += 1
@@ -1355,6 +1357,23 @@ async def _limpieza_periodica() -> None:
         motor.limpiar_inactivos()
 
 
+async def _vigilante_vencimientos() -> None:
+    """Revisa los vencimientos de claves DIAN cada 10 minutos.
+
+    El primer chequeo corre ~30 s después del arranque (hace catch-up si ya
+    pasaron las 8:00 AM Bogotá); el marcador diario evita repetir el envío.
+    """
+    await asyncio.sleep(30)
+    while True:
+        try:
+            resumen = await asyncio.to_thread(vencimientos.revisar_y_notificar)
+            if resumen.get("enviados"):
+                print(f"[vencimientos] {resumen}", flush=True)
+        except Exception as exc:
+            print(f"[vencimientos] error: {exc}", flush=True)
+        await asyncio.sleep(10 * 60)
+
+
 @app.on_event("startup")
 async def _startup():
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1364,3 +1383,4 @@ async def _startup():
     auth.marcar_consultas_huerfanas()
     _limpiar_jobs_viejos()
     asyncio.create_task(_limpieza_periodica())
+    asyncio.create_task(_vigilante_vencimientos())

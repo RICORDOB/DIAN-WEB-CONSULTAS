@@ -35,6 +35,20 @@ def _normalizar(texto: str | None) -> str:
     return (texto or "").strip().lower()
 
 
+def _texto_telefono(valor) -> str | None:
+    """Normaliza el teléfono de una celda de Excel a texto limpio.
+
+    openpyxl entrega los números como float; se convierte 3001234567.0 en
+    '3001234567' para que el teléfono quede usable tal cual.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    texto = str(valor).strip()
+    return texto or None
+
+
 def cargar_filas(ruta: Path) -> tuple[list[dict], list[str]]:
     """Lee el Excel de entrada y devuelve (filas, encabezados).
 
@@ -83,7 +97,8 @@ def cargar_clientes(ruta: Path) -> list[dict]:
     Usado por el chat bot: el archivo clientes_dian.xlsx es el catálogo de
     clientes autorizados, no una lista de pendientes por procesar. Exige las
     mismas 3 columnas requeridas; si no hay columna 'fecha_vencimiento' se
-    deja en None. No devuelve la fila física (idem a cargar_filas).
+    deja en None, igual que el teléfono opcional ('telefono' o 'teléfono').
+    No devuelve la fila física (idem a cargar_filas).
     """
     wb = load_workbook(ruta)
     ws = wb.active
@@ -101,6 +116,7 @@ def cargar_clientes(ruta: Path) -> list[dict]:
             + f". Faltan: {', '.join(faltantes)}."
         )
 
+    col_telefono = idx.get("telefono", idx.get("teléfono"))
     clientes: list[dict] = []
     for row in filas_raw[1:]:
         tipo = row[idx["tipo_documento"]]
@@ -109,11 +125,13 @@ def cargar_clientes(ruta: Path) -> list[dict]:
         if numero is None or str(numero).strip() == "" or password is None:
             continue
         fecha = row[idx.get("fecha_vencimiento")] if "fecha_vencimiento" in idx else None
+        tel = row[col_telefono] if col_telefono is not None else None
         clientes.append({
             "tipo_documento": str(tipo or "Cédula de Ciudadanía").strip(),
             "numero_documento": str(numero).strip(),
             "contrasena": str(password),
             "fecha_vencimiento": str(fecha).strip() if fecha is not None else None,
+            "telefono": _texto_telefono(tel),
         })
     return clientes
 

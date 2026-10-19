@@ -75,6 +75,33 @@ def test_bloquear_usuario_inexistente(db, admin):
         auth.bloquear_usuario("fantasma", True, admin)
 
 
+def test_telefono_cliente_se_guarda_y_conserva(db):
+    auth.guardar_cliente("111", "CC", "cif1", "2026-10-22",
+                         telefono="3001234567")
+    c = auth.listar_clientes()[0]
+    assert c["telefono"] == "3001234567"
+
+    # Re-subida sin teléfono: se conserva el anterior (COALESCE).
+    auth.guardar_cliente("111", "CC", "cif2", "2026-10-22")
+    assert auth.listar_clientes()[0]["telefono"] == "3001234567"
+
+    # Con teléfono nuevo: se actualiza (y se limpia el espaciado).
+    auth.guardar_cliente("111", "CC", "cif3", "2026-10-23",
+                         telefono=" 310 555 0000 ")
+    c = auth.listar_clientes()[0]
+    assert c["telefono"] == "310 555 0000"
+    assert c["fecha_vencimiento"] == "2026-10-23"
+    assert "contrasena" not in c and "contrasena_cifrada" not in c
+
+
+def test_listar_usuarios_suscritos(db):
+    assert auth.listar_usuarios_suscritos() == []
+    auth.guardar_suscripcion("ana", "https://fcm/a", "k1", "a1")
+    auth.guardar_suscripcion("ana", "https://fcm/b", "k2", "a2")
+    auth.guardar_suscripcion("luis", "https://fcm/c", "k3", "a3")
+    assert sorted(auth.listar_usuarios_suscritos()) == ["ana", "luis"]
+
+
 def test_admin_reset_cuando_cambia_env(db, admin):
     # El admin ya existe con clave "admin123" (fixture).
     assert auth.verificar_login(admin, "admin123")["rol"] == "admin"
