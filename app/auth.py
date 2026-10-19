@@ -195,17 +195,32 @@ def iniciar_db() -> None:
         admin_user = os.environ.get("APP_ADMIN_USER")
         admin_pass = os.environ.get("APP_ADMIN_PASS")
         if admin_user and admin_pass:
-            existe = conn.execute(
-                "SELECT 1 FROM usuarios WHERE usuario = ? AND rol = 'admin'",
+            fila = conn.execute(
+                "SELECT hash, salt, rol, estado FROM usuarios WHERE usuario = ?",
                 (admin_user,),
             ).fetchone()
-            if not existe:
+            if fila is None:
                 h, s = _hash_password(admin_pass)
                 conn.execute(
                     "INSERT INTO usuarios (usuario, hash, salt, rol, estado, creado_en) "
                     "VALUES (?, ?, ?, 'admin', 'aprobado', ?)",
                     (admin_user, h, s, time.strftime("%Y-%m-%d %H:%M:%S")),
                 )
+                print(f"[admin] administrador '{admin_user}' creado desde APP_ADMIN_USER")
+            elif (
+                not _verificar_password(admin_pass, fila["salt"], fila["hash"])
+                or fila["rol"] != ROL_ADMIN
+                or fila["estado"] != APROBADO
+            ):
+                h, s = _hash_password(admin_pass)
+                conn.execute(
+                    "UPDATE usuarios SET hash = ?, salt = ?, rol = 'admin', estado = ? "
+                    "WHERE usuario = ?",
+                    (h, s, APROBADO, admin_user),
+                )
+                print(f"[admin] administrador '{admin_user}' actualizado desde APP_ADMIN_PASS")
+            else:
+                print(f"[admin] administrador '{admin_user}' al día")
 
 
 # ---------------------------------------------------------------------------

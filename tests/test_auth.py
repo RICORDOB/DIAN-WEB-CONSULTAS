@@ -1,5 +1,7 @@
 """Pruebas de auth: hash, registro/aprobación, bloqueo/desbloqueo y seed de admin."""
 
+import os
+
 import pytest
 
 from app import auth
@@ -71,3 +73,36 @@ def test_admin_seed(db, admin):
 def test_bloquear_usuario_inexistente(db, admin):
     with pytest.raises(auth.AuthError, match="No se encontr"):
         auth.bloquear_usuario("fantasma", True, admin)
+
+
+def test_admin_reset_cuando_cambia_env(db, admin):
+    # El admin ya existe con clave "admin123" (fixture).
+    assert auth.verificar_login(admin, "admin123")["rol"] == "admin"
+
+    # Se cambia la variable de entorno a una clave nueva y se re-siembra.
+    os.environ["APP_ADMIN_PASS"] = "nueva-clave-2026"
+    auth.iniciar_db()
+
+    # La clave vieja ya no entra; la nueva sí.
+    with pytest.raises(auth.AuthError, match="incorrectos"):
+        auth.verificar_login(admin, "admin123")
+    login = auth.verificar_login(admin, "nueva-clave-2026")
+    assert login["rol"] == "admin"
+    assert login["estado"] == auth.APROBADO
+
+
+def test_admin_siembra_no_toca_si_coincide(db, admin):
+    with auth._conectar() as conn:
+        fila = conn.execute(
+            "SELECT hash, salt FROM usuarios WHERE usuario = ?", (admin,)
+        ).fetchone()
+
+    os.environ["APP_ADMIN_PASS"] = "admin123"
+    auth.iniciar_db()
+
+    with auth._conectar() as conn:
+        fila2 = conn.execute(
+            "SELECT hash, salt FROM usuarios WHERE usuario = ?", (admin,)
+        ).fetchone()
+    assert fila["hash"] == fila2["hash"]
+    assert fila["salt"] == fila2["salt"]
