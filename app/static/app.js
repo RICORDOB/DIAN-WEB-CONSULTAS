@@ -608,6 +608,7 @@ function iniciarContadores() {
 /* ------------------------------------------------------------------ */
 let _chartDias = null;
 let _chartEstados = null;
+let _datosGraficas = null;
 let _filtrosConsultas = { estado: "", usuario: "" };
 
 const ETIQUETA_ESTADO = {
@@ -892,9 +893,26 @@ function iniciarDev() {
       '<span class="kpi-valor kpi-' + tipo + '">' + escapar(String(valor)) + "</span></div>";
   }
 
+  function coloresGraficas() {
+    const claro = document.documentElement.getAttribute("data-theme") === "light";
+    return {
+      texto: claro ? "#5a6b7a" : "#94a6b1",
+      rejilla: claro ? "rgba(15,23,42,.08)" : "rgba(255,255,255,.10)",
+      exitosa: "#10b981",
+      error: "#ef4444",
+      curso: claro ? "#1a3560" : "#24406b",
+    };
+  }
+
   function dibujarGraficas(data) {
+    _datosGraficas = data;
     const dias = data.por_dia || [];
     if (window.Chart) {
+      const c = coloresGraficas();
+      Chart.defaults.color = c.texto;
+      Chart.defaults.borderColor = c.rejilla;
+      Chart.defaults.font.family = '"Inter", -apple-system, system-ui, sans-serif';
+
       const labels = dias.map((d) => d.fecha.slice(5));
       if (_chartDias) _chartDias.destroy();
       _chartDias = new Chart(document.getElementById("chartDias"), {
@@ -902,26 +920,30 @@ function iniciarDev() {
         data: {
           labels: labels,
           datasets: [
-            { label: "Exitosas", data: dias.map((d) => d.done), backgroundColor: "#2e7d32" },
-            { label: "Errores", data: dias.map((d) => d.error), backgroundColor: "#c62828" },
+            { label: "Exitosas", data: dias.map((d) => d.done), backgroundColor: c.exitosa },
+            { label: "Errores", data: dias.map((d) => d.error), backgroundColor: c.error },
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } },
+          scales: {
+            x: { stacked: true, grid: { color: c.rejilla }, ticks: { color: c.texto } },
+            y: { stacked: true, beginAtZero: true, grid: { color: c.rejilla }, ticks: { color: c.texto } },
+          },
         },
       });
 
       if (_chartEstados) _chartEstados.destroy();
-      const c = data.consultas;
+      const c2 = data.consultas;
       _chartEstados = new Chart(document.getElementById("chartEstados"), {
         type: "doughnut",
         data: {
           labels: ["Exitosas", "Errores", "En curso"],
           datasets: [{
-            data: [c.done, c.error, c.running + c.queued],
-            backgroundColor: ["#2e7d32", "#c62828", "#0c1f3f"],
+            data: [c2.done, c2.error, c2.running + c2.queued],
+            backgroundColor: [c.exitosa, c.error, c.curso],
+            borderColor: "transparent",
           }],
         },
         options: { responsive: true, maintainAspectRatio: false },
@@ -1294,6 +1316,14 @@ function iniciarRecuperacion() {
     cerrarModal();
   });
 }
+
+/* Recolorear gráficas al cambiar de tema                              */
+/* ------------------------------------------------------------------ */
+document.addEventListener("exorenta:tema", () => {
+  if (typeof _datosGraficas !== "undefined" && _datosGraficas && typeof dibujarGraficas === "function") {
+    dibujarGraficas(_datosGraficas);
+  }
+});
 
 /* Dispatcher por página                                               */
 /* ------------------------------------------------------------------ */
