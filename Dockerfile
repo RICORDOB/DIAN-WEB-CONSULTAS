@@ -9,12 +9,16 @@ WORKDIR /app
 # Google Chrome real (anti-detección DIAN): el portal MUISCA solo habilita sus
 # formularios con un Chrome sin banderas de automatización; mismo binario
 # validado con evidencia. El Chromium de la imagen queda como respaldo.
+# Multi-arquitectura: amd64 (Render/GCP) y arm64 (Oracle Ampere A1).
+ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends wget ca-certificates \
- && wget -q -O /tmp/google-chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+ && wget -q -O /tmp/google-chrome.deb \
+      "https://dl.google.com/linux/direct/google-chrome-stable_current_${TARGETARCH}.deb" \
  && apt-get install -y --no-install-recommends /tmp/google-chrome.deb \
  && rm -f /tmp/google-chrome.deb \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && google-chrome --version
 
 # Copiamos primero requirements para cachear la capa de instalación.
 COPY requirements.txt .

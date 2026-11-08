@@ -1,0 +1,37 @@
+# Caddyfile — TLS automático (Let's Encrypt) para ExoRenta.
+# El dominio llega por la variable de entorno DOMAIN (ver deploy_oracle.sh).
+# Caddy escucha en 80/443 y hace proxy al contenedor en loopback.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Descargas (xls/zip de consultas masivas) y subida de plantillas
+	request_body {
+		max_size 25MB
+	}
+
+	reverse_proxy 127.0.0.1:8000 {
+		# Las consultas DIAN pueden tardar varios minutos: sin corte prematuro.
+		transport http {
+			read_timeout 20m
+			write_timeout 20m
+		}
+		# Streaming del progreso de jobs (SSE/polling) sin buffering.
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/exorenta.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+}

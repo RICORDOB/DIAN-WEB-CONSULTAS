@@ -1,20 +1,52 @@
-name: Deploy a Render
+name: Deploy a Oracle (producción)
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Disparar deploy en Render (dian-web)
+      - name: Comprobar secretos de despliegue
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
-          curl -sS -X POST \
-            -H "Authorization: Bearer ${RENDER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            https://api.render.com/v1/services/srv-d9v6jam7bikc73bt9rn0/deploys
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_KEY" ]; then
+            echo "::warning::Faltan SSH_HOST/SSH_KEY. Configúralos en Settings → Secrets → Actions."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        id: preflight
+
+      - name: Deploy por SSH
+        if: steps.preflight.outputs.skip != 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          command_timeout: 25m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/exorenta
+            git fetch --prune origin
+            git reset --hard origin/main
+            APP_VERSION="$(git rev-parse --short HEAD)" docker compose up -d --build
+            docker image prune -f
+            for i in $(seq 1 60); do
+              if curl -fsS --max-time 5 http://127.0.0.1:8000/health >/dev/null; then
+                echo "Healthcheck OK"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "Healthcheck FALLÓ"
+            docker compose logs --tail=150 app
+            exit 1

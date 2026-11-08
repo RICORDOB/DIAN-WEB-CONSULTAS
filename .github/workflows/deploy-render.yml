@@ -1,0 +1,25 @@
+name: Deploy a Render (respaldo manual)
+
+# Se conserva solo como plan B mientras dure la transición a Oracle.
+# Requiere el secreto RENDER_API_KEY. No se dispara con push.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar deploy en Render (dian-web)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "::error::Falta el secreto RENDER_API_KEY"
+            exit 1
+          fi
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            https://api.render.com/v1/services/srv-d9v6jam7bikc73bt9rn0/deploys

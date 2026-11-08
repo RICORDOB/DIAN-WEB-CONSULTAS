@@ -216,6 +216,39 @@ def _sesion(token: Optional[str]) -> Optional[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Healthcheck (monitoreo externo y verificación post-deploy)
+# ---------------------------------------------------------------------------
+@app.get("/health")
+async def health():
+    """Estado del servicio sin exponer datos sensibles.
+
+    Devuelve 200 si la app responde y la BD contesta; 503 si la BD falla.
+    Usado por docker healthcheck, Caddy y UptimeRobot.
+    """
+    checks: dict[str, object] = {"app": "ok"}
+    estado = 200
+
+    try:
+        with db.conectar() as conn:
+            conn.execute("SELECT 1")
+        checks["db"] = "ok"
+    except Exception as exc:  # noqa: BLE001 - el health nunca debe romper
+        checks["db"] = f"error: {type(exc).__name__}"
+        estado = 503
+
+    checks["db_backend"] = "turso" if db.turso_activado() else "sqlite"
+    checks["chrome"] = "ok" if shutil.which("google-chrome") else "missing"
+    checks["jobs_dir"] = "ok" if JOBS_DIR.is_dir() and os.access(JOBS_DIR, os.W_OK) else "error"
+    checks["version"] = os.environ.get("APP_VERSION", "dev")
+
+    return JSONResponse(
+        {"status": "ok" if estado == 200 else "degraded", "checks": checks},
+        status_code=estado,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Vistas HTML
 # ---------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
