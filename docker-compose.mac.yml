@@ -1,0 +1,50 @@
+# Despliegue local en macOS + Cloudflare Tunnel.
+#
+# La app escucha solo en loopback (127.0.0.1:8000); cloudflared publica
+# ese puerto con HTTPS. No hay Caddy ni puertos abiertos al router.
+#
+# Uso:
+#   cp .env.prod .env
+#   docker compose -f docker-compose.mac.yml up -d
+#   curl -s localhost:8000/health | python3 -m json.tool
+
+services:
+  app:
+    image: exorenta:latest
+    container_name: exorenta
+    restart: always
+    env_file:
+      - .env
+    environment:
+      PORT: "8000"
+      APP_DATA_DIR: /data
+      APP_JOBS_DIR: /data/jobs
+      APP_VERSION: ${APP_VERSION:-mac-local}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - exorenta_data:/data
+    # Chrome necesita memoria compartida amplia para no morir en páginas pesadas.
+    shm_size: "1gb"
+    # Docker Desktop tiene ~3.8 GB en este equipo: dejamos aire para el host.
+    mem_limit: 3g
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  exorenta_data:
