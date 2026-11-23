@@ -124,13 +124,61 @@ vuelve a `MIN_INSTANCES=0`.
 
 ## 5. DNS y corte
 
-1. Apuntar `exorenta.date` al servicio de Cloud Run:
-   - Opción A: **dominio personalizado** en Cloud Run (Console → servicio →
-     Domain mappings → Add mapping), verificando la propiedad con un TXT en
-     Cloudflare y añadiendo los registros A/AAAA que indica Google.
-   - Opción B: usar temporalmente la URL `https://exorenta-89049681388.us-east1.run.app`.
-2. Actualizar la landing (Vercel) `NEXT_PUBLIC_EXORENTA_URL` a la nueva URL y
-   redesplegar.
+### 5.1 Dominio personalizado (hecho)
+
+`exorenta.date` y `www.exorenta.date` están mapeados al servicio con **Cloud Run
+domain mappings** (el dominio ya estaba verificado con el TXT
+`google-site-verification=…` que vive en Cloudflare).
+
+```bash
+gcloud beta run domain-mappings list --region us-east1
+gcloud beta run domain-mappings describe --domain exorenta.date --region us-east1
+```
+
+Registros DNS en Cloudflare (**modo DNS only / nube gris**, sin proxy):
+
+| Tipo | Nombre | Valor |
+|---|---|---|
+| A | `exorenta.date` | `216.239.32.21` `216.239.34.21` `216.239.36.21` `216.239.38.21` |
+| AAAA | `exorenta.date` | `2001:4860:4802:32::15` `…34::15` `…36::15` `…38::15` |
+| CNAME | `www.exorenta.date` | `ghs.googlehosted.com` |
+| TXT | `exorenta.date` | `google-site-verification=…` (no borrar: mantiene la verificación) |
+
+> **Por qué DNS only y no proxy naranja:** el proxy de Cloudflare corta las
+> peticiones a los 100 s, y una consulta individual a MUISCA puede acercarse a
+> ese límite. En DNS only el tráfico va directo a Google (TLS gestionado por
+> Google, sin límite de 100 s) y el WAF/protección pasa a ser el de Google Cloud.
+
+El certificado gestionado tarda entre 15 min y ~24 h en emitirse tras apuntar el
+DNS. Mientras tanto `https://exorenta.date` falla pero
+`https://exorenta-89049681388.us-east1.run.app` sigue operativo.
+
+Verificación:
+```bash
+dig +short A exorenta.date @8.8.8.8
+curl -s https://exorenta.date/health
+gcloud beta run domain-mappings describe --domain exorenta.date --region us-east1 \
+  --format="value(status.conditions)"
+```
+
+### 5.2 Rollback del DNS (volver al túnel)
+
+Si hubiera que volver al stack local, en Cloudflare: borrar los A/AAAA del apex y
+el CNAME de `www`, y recrear los CNAME del túnel:
+
+```
+exorenta.date      CNAME dd539648-4bc3-4147-8989-b38b6a5fa093.cfargotunnel.com  (proxied)
+www.exorenta.date  CNAME dd539648-4bc3-4147-8989-b38b6a5fa093.cfargotunnel.com  (proxied)
+```
+
+(El ID `dd539648-…` es el túnel `exorenta` que quedó apagado; ver
+`~/.cloudflared/config.yml`.)
+
+### 5.3 Landing
+
+`NEXT_PUBLIC_EXORENTA_URL` en el proyecto Vercel `contador-a-tu-servicio` apunta
+hoy a `https://exorenta-89049681388.us-east1.run.app`. Cuando el dominio tenga
+certificado, cambiarlo a `https://exorenta.date` y redesplegar.
 3. **Apagar lo local** (el alivio en la M1):
    ```bash
    docker compose -f docker-compose.mac.yml down
