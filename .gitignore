@@ -30,5 +30,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+# Env generado por scripts/deploy_cloudrun.sh (contiene secretos)
+cloudrun.env.yaml
 # Inspecciones locales (no subir)
 .inspeccion_*/
