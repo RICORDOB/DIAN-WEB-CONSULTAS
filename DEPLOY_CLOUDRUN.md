@@ -8,6 +8,17 @@ a **Google Cloud Run** (serverless, escala a cero).
 > Run ejecuta el mismo contenedor Docker **bajo demanda**: pagas solo el tiempo
 > real de consulta y **$0 cuando nadie usa el servicio**.
 
+## Estado (nov 2026)
+
+- ✅ **Desplegado** en `https://exorenta-89049681388.us-east1.run.app`
+  (`/health` reporta `chrome: ok` y `db_backend: turso`).
+- ✅ **Landing** (`contador-a-tu-servicio`) apunta a Cloud Run.
+- ✅ **Local apagado**: contenedor Docker `exorenta`, túnel `cloudflared`,
+  `caffeinate` y el supervisor `com.exorenta.*` están detenidos. La Mac puede
+  apagarse.
+- ⏳ **Pendiente (opcional)**: mapear `exorenta.date` al servicio (ver §5). Hasta
+  entonces ese dominio responde 530; el producto se entra por la landing.
+
 ---
 
 ## 0. Por qué no hace falta tocar el código
@@ -79,7 +90,7 @@ Qué hace:
 Verificación:
 
 ```bash
-curl -s https://<servicio>.run.app/health
+curl -s https://exorenta-89049681388.us-east1.run.app/health
 # debe reportar "chrome":"ok" y "db_backend":"turso"
 ```
 
@@ -117,7 +128,7 @@ vuelve a `MIN_INSTANCES=0`.
    - Opción A: **dominio personalizado** en Cloud Run (Console → servicio →
      Domain mappings → Add mapping), verificando la propiedad con un TXT en
      Cloudflare y añadiendo los registros A/AAAA que indica Google.
-   - Opción B: usar temporalmente la URL `https://<servicio>.run.app`.
+   - Opción B: usar temporalmente la URL `https://exorenta-89049681388.us-east1.run.app`.
 2. Actualizar la landing (Vercel) `NEXT_PUBLIC_EXORENTA_URL` a la nueva URL y
    redesplegar.
 3. **Apagar lo local** (el alivio en la M1):
