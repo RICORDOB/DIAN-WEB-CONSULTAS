@@ -10,14 +10,18 @@ a **Google Cloud Run** (serverless, escala a cero).
 
 ## Estado (nov 2026)
 
-- ✅ **Desplegado** en `https://exorenta-89049681388.us-east1.run.app`
-  (`/health` reporta `chrome: ok` y `db_backend: turso`).
-- ✅ **Landing** (`contador-a-tu-servicio`) apunta a Cloud Run.
+- ✅ **Desplegado** en `https://exorenta.date` (y en la URL técnica
+  `https://exorenta-89049681388.us-east1.run.app`). `/health` reporta
+  `chrome: ok` y `db_backend: turso`.
+- ✅ **Dominio propio**: `exorenta.date` y `www.exorenta.date` mapeados con
+  **Cloud Run domain mappings**, certificado gestionado por Google emitido y
+  HTTPS verificado (ver §5).
+- ✅ **Landing** (`contador-a-tu-servicio`) apunta a `https://exorenta.date`.
 - ✅ **Local apagado**: contenedor Docker `exorenta`, túnel `cloudflared`,
   `caffeinate` y el supervisor `com.exorenta.*` están detenidos. La Mac puede
   apagarse.
-- ⏳ **Pendiente (opcional)**: mapear `exorenta.date` al servicio (ver §5). Hasta
-  entonces ese dominio responde 530; el producto se entra por la landing.
+- ✅ **`APP_VERSION`** se inyecta con el SHA del commit, así `/health` identifica
+  la revisión desplegada.
 
 ---
 
@@ -177,8 +181,15 @@ www.exorenta.date  CNAME dd539648-4bc3-4147-8989-b38b6a5fa093.cfargotunnel.com  
 ### 5.3 Landing
 
 `NEXT_PUBLIC_EXORENTA_URL` en el proyecto Vercel `contador-a-tu-servicio` apunta
-hoy a `https://exorenta-89049681388.us-east1.run.app`. Cuando el dominio tenga
-certificado, cambiarlo a `https://exorenta.date` y redesplegar.
+a `https://exorenta.date`. Si hay que cambiarlo:
+
+```bash
+cd ~/VIBE\ CODING/01-PROYECTOS-WEB/contador-a-tu-servicio-landing
+vercel env rm NEXT_PUBLIC_EXORENTA_URL production --yes
+printf 'https://exorenta.date' | vercel env add NEXT_PUBLIC_EXORENTA_URL production
+# el workflow de GitHub aplana apps/web + packages/shared en .deploy y despliega:
+cd .deploy && vercel deploy --prod --yes
+```
 3. **Apagar lo local** (el alivio en la M1):
    ```bash
    docker compose -f docker-compose.mac.yml down
