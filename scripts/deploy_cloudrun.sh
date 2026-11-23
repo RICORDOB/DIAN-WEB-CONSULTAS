@@ -68,14 +68,17 @@ gcloud artifacts repositories create "$REPO_ARTIFACT" \
   --repository-format=docker --location="$REGION" --project "$PROJECT" \
   >/dev/null 2>&1 || true   # ya existe -> OK
 
+# SHA del commit: etiqueta la imagen y se expone en /health como APP_VERSION.
+SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo manual)"
+
 # ---------------------------------------------------------------------------
 # 3. Variables de entorno para Cloud Run (desde .env, sin exponer secretos)
 # ---------------------------------------------------------------------------
 echo "==> 3/5 Preparando variables de entorno"
-python3 - "$ENV_FILE" "$ENV_YAML" <<'PY'
+python3 - "$ENV_FILE" "$ENV_YAML" "$SHA" <<'PY'
 import pathlib, sys
 
-env_file, out_file = sys.argv[1], sys.argv[2]
+env_file, out_file, sha = sys.argv[1], sys.argv[2], sys.argv[3]
 
 # Solo migramos las variables de la app. Cloud Run inyecta su propio PORT y
 # forzamos /tmp (el filesystem del contenedor es de solo lectura salvo /tmp;
@@ -102,6 +105,7 @@ if faltan:
 valores["APP_ENV"] = "prod"
 valores["APP_DATA_DIR"] = "/tmp/data"
 valores["APP_JOBS_DIR"] = "/tmp/jobs"
+valores["APP_VERSION"] = sha
 
 def yaml(s: str) -> str:
     return "'" + s.replace("'", "''") + "'"
@@ -114,7 +118,6 @@ PY
 # ---------------------------------------------------------------------------
 # 4. Build en Cloud Build (amd64) y push al registro
 # ---------------------------------------------------------------------------
-SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo manual)"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO_ARTIFACT/exorenta:$SHA"
 
 echo "==> 4/5 Construyendo imagen $IMAGE (Cloud Build, amd64)"
